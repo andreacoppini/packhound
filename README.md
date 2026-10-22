@@ -325,6 +325,16 @@ join mode works the same on all three.
 
 ## Changelog
 
+What's new in 1.1.0 (2026-10-22):
+
+```
+*) Dante: multicast flows named after the device that sends them, the
+   PTPv1 clock leader decoded, and Dante devices and their channels
+   listed from mDNS.
+*) Any stream's sender shows the name it announces over mDNS (table,
+   senders list, and senderName in the API).
+```
+
 What's new in 1.0.0 (2026-10-22):
 
 ```

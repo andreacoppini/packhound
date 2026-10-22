@@ -1,21 +1,10 @@
-First release of Packhound: see the multicast streams arriving at a network port.
+**Packhound 1.1.0: Dante.**
 
-- **Every multicast stream on the port**, with its type, name, sender, bit rate, packet rate, packet size, jitter, errors and health, refreshed every second.
-- **IPTV**: MPEG-TS over UDP or RTP, with the channel name from the SDT, the PIDs and their rates, H.264 picture size, continuity-counter errors, RTP losses and the Media Delivery Index.
-- **Audio**: AES67 and other RTP audio, named from SAP announcements.
-- **Discovery and control**: mDNS (services announced), SSDP/UPnP (devices), WS-Discovery, LLMNR, SAP, PTP (grandmaster), IGMP (querier, memberships), VRRP and HSRP.
-- **IPv6** on its own tab: neighbour discovery, router adverts, MLD, mDNS.
-- **Alerts** when a video or audio stream stops, drops below its usual rate, shows errors or gains a second sender.
-- **Two ways to listen**: capture everything on the port (root on Linux and macOS, Npcap on Windows), or join listed groups with no privileges or drivers.
-- **Record** to a pcap file for Wireshark; export the table as CSV or JSON.
-- **Demo mode** to try the console with no network.
+- **Dante multicast flows** are named after the device that sends them, so a device's flows sort together.
+- **Dante's clock:** PTPv1, which Dante uses unless in AES67 mode, is decoded beside PTPv2: the clock leader's ID, address and device name, its stratum and identifier, and the sync interval.
+- **Dante devices** and the number of channels each announces are listed from their mDNS announcements, and Dante's services are named.
+- **Sender names:** wherever a sender announces a name over mDNS, it appears beside its address in the table, the senders list, and the API (`senderName`).
 
-Downloads are below. There is no installer: unzip and run.
+Native Dante audio uses its own format, so a flow shows rate, packets, jitter and whether it stops, but not channel content. Dante sends audio unicast unless a flow is set to multicast, and unicast flows are not visible to a multicast monitor.
 
-**Virtual appliance.** `packhound-appliance-*.ova` (VMware, VirtualBox), `.qcow2` (Proxmox, KVM) and `-hyperv.zip` (Hyper-V): a minimal Debian that runs Packhound around the clock.
-
-- A short setup on the VM console: address (DHCP or static), host name, login. Everything else is in the web console.
-- The web console behind a login, over HTTPS. What you start keeps running, and resumes after a reboot.
-- **SNMP v1/v2c agent** with `PACKHOUND-MIB`: per-stream name, status, rate, packet rate, jitter and errors, indexed by group and port, ready for The Dude and other managers.
-- **REST API** (`/api/v1/...`) with a token, and Prometheus metrics at `/metrics`.
-- Network, host name, time, SSH, reboot and shutdown from Settings.
+**Downloads:** Windows, macOS and Linux builds, and the virtual appliance as `.ova` (VMware, VirtualBox), `.qcow2` (Proxmox, KVM) and `-hyperv.zip` (Hyper-V). There is no installer: unzip and run, or import the appliance.
