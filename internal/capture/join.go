@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"golang.org/x/net/ipv4"
@@ -59,7 +60,7 @@ func OpenJoin(ifc Interface, gs []groups.Group) (*Joined, error) {
 			j.Failed = append(j.Failed, fmt.Sprintf("%s: %v", g, err))
 			continue
 		}
-		j.conns = append(j.conns, c)
+		j.conns = append(j.conns, c.conn)
 		j.wg.Add(1)
 		go j.read(c, g)
 	}
@@ -69,15 +70,29 @@ func OpenJoin(ifc Interface, gs []groups.Group) (*Joined, error) {
 	return j, nil
 }
 
-func joinOne(ni *net.Interface, g groups.Group) (net.PacketConn, error) {
-	lc := net.ListenConfig{Control: reuseControl}
+// joined is one group's socket, with the wrapper that was told to report
+// each datagram's destination: the option lives in the wrapper as well as
+// the socket, so reading through a new wrapper would lose it.
+type joined struct {
+	conn net.PacketConn
+	p4   *ipv4.PacketConn
+	p6   *ipv6.PacketConn
+}
+
+func joinOne(ni *net.Interface, g groups.Group) (joined, error) {
+	lc := net.ListenConfig{Control: func(network, address string, rc syscall.RawConn) error {
+		if err := reuseControl(network, address, rc); err != nil {
+			return err
+		}
+		return rc.Control(func(fd uintptr) { onlyJoinedGroups(fd, g.Addr.Is6()) })
+	}}
 	network, bind := "udp4", fmt.Sprintf("0.0.0.0:%d", g.Port)
 	if g.Addr.Is6() {
 		network, bind = "udp6", fmt.Sprintf("[::]:%d", g.Port)
 	}
-	// Binding to the group itself makes the kernel deliver only that
-	// group's traffic to the socket. Windows refuses a multicast bind, but
-	// filters by membership anyway.
+	// Asking for the group's address keeps the intent plain, though Go binds
+	// a multicast listener to the wildcard regardless; onlyJoinedGroups and
+	// the destination check in read are what keep groups apart.
 	if runtime.GOOS != "windows" {
 		if g.Addr.Is4() {
 			bind = netip.AddrPortFrom(g.Addr, g.Port).String()
@@ -87,37 +102,32 @@ func joinOne(ni *net.Interface, g groups.Group) (net.PacketConn, error) {
 	}
 	c, err := lc.ListenPacket(context.Background(), network, bind)
 	if err != nil {
-		return nil, err
+		return joined{}, err
 	}
+	j := joined{conn: c}
 	ga := &net.UDPAddr{IP: g.Addr.AsSlice()}
 	if g.Addr.Is4() {
-		pc := ipv4.NewPacketConn(c)
-		if err := pc.JoinGroup(ni, ga); err != nil {
+		j.p4 = ipv4.NewPacketConn(c)
+		if err := j.p4.JoinGroup(ni, ga); err != nil {
 			c.Close()
-			return nil, err
+			return joined{}, err
 		}
-		_ = pc.SetControlMessage(ipv4.FlagDst, true)
+		_ = j.p4.SetControlMessage(ipv4.FlagDst, true)
 	} else {
-		pc := ipv6.NewPacketConn(c)
-		if err := pc.JoinGroup(ni, ga); err != nil {
+		j.p6 = ipv6.NewPacketConn(c)
+		if err := j.p6.JoinGroup(ni, ga); err != nil {
 			c.Close()
-			return nil, err
+			return joined{}, err
 		}
-		_ = pc.SetControlMessage(ipv6.FlagDst, true)
+		_ = j.p6.SetControlMessage(ipv6.FlagDst, true)
 	}
 	_ = c.(*net.UDPConn).SetReadBuffer(8 << 20)
-	return c, nil
+	return j, nil
 }
 
-func (j *Joined) read(c net.PacketConn, g groups.Group) {
+func (j *Joined) read(c joined, g groups.Group) {
 	defer j.wg.Done()
-	var p4 *ipv4.PacketConn
-	var p6 *ipv6.PacketConn
-	if g.Addr.Is4() {
-		p4 = ipv4.NewPacketConn(c)
-	} else {
-		p6 = ipv6.NewPacketConn(c)
-	}
+	p4, p6 := c.p4, c.p6
 	for {
 		jp := j.pool.Get().(*joinPkt)
 		var n int
@@ -140,6 +150,12 @@ func (j *Joined) read(c net.PacketConn, g groups.Group) {
 					dst = a
 				}
 			}
+		}
+		// A datagram for another group is someone else's: the socket that
+		// joined that group reports it.
+		if err == nil && dst != g.Addr {
+			j.pool.Put(jp)
+			continue
 		}
 		if err != nil {
 			j.pool.Put(jp)
