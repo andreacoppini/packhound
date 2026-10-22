@@ -98,6 +98,27 @@ func (m *Muxer) PES(pid uint16, streamID uint8, es []byte) [][]byte {
 	return m.packets(pid, append(h, es...), 0xff)
 }
 
+// AdaptationOnly is a packet on pid carrying only an adaptation field, as
+// encoders send a PCR between video packets. With advance set, the counter
+// moves on as it would for a payload packet, which is the non-compliant
+// behaviour some encoders have.
+func (m *Muxer) AdaptationOnly(pid uint16, advance bool) []byte {
+	p := make([]byte, PacketSize)
+	p[0], p[1], p[2] = SyncByte, byte(pid>>8)&0x1f, byte(pid)
+	cc := (m.cc[pid] - 1) & 0x0f
+	if advance {
+		cc = m.cc[pid]
+		m.cc[pid] = (cc + 1) & 0x0f
+	}
+	p[3] = 0x20 | cc
+	p[4] = 183
+	p[5] = 0x10 // PCR flag
+	for i := 12; i < PacketSize; i++ {
+		p[i] = 0xff
+	}
+	return p
+}
+
 // Null is one null packet.
 func (m *Muxer) Null() []byte {
 	p := make([]byte, PacketSize)

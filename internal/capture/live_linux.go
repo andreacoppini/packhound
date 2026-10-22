@@ -49,10 +49,12 @@ var multicastOnly = func() []bpf.RawInstruction {
 }()
 
 type afPacket struct {
-	fd     int
-	buf    []byte
-	oob    []byte
-	closed atomic.Bool
+	fd      int
+	dropped atomic.Uint64
+	statAt  time.Time
+	buf     []byte
+	oob     []byte
+	closed  atomic.Bool
 }
 
 func openLive(ifc Interface) (Source, error) {
@@ -107,6 +109,14 @@ func (a *afPacket) Next() (Frame, error) {
 		if a.closed.Load() {
 			return Frame{}, ErrClosed
 		}
+		// The kernel's drop count resets each time it is read, so it is
+		// read here, by the one goroutine using the socket, and summed.
+		if now := time.Now(); now.Sub(a.statAt) >= time.Second {
+			a.statAt = now
+			if st, err := unix.GetsockoptTpacketStats(a.fd, unix.SOL_PACKET, unix.PACKET_STATISTICS); err == nil {
+				a.dropped.Add(uint64(st.Drops))
+			}
+		}
 		n, oobn, _, from, err := unix.Recvmsg(a.fd, a.buf, a.oob, 0)
 		if err != nil {
 			if errors.Is(err, unix.EAGAIN) || errors.Is(err, unix.EINTR) {
@@ -137,6 +147,8 @@ func stamp(oob []byte) time.Time {
 	}
 	return time.Now()
 }
+
+func (a *afPacket) Dropped() uint64 { return a.dropped.Load() }
 
 func (a *afPacket) Close() error {
 	if a.closed.Swap(true) {

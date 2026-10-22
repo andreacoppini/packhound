@@ -22,7 +22,7 @@ var npcap struct {
 	err  error
 
 	create, setSnaplen, setPromisc, setTimeout, setImmediate, setBuffer,
-	activate, setfilter, nextEx, datalink, close, geterr *windows.Proc
+	activate, setfilter, nextEx, datalink, close, geterr, stats *windows.Proc
 }
 
 const npcapMissing = "live capture on Windows needs Npcap, free from https://npcap.com (tick \"WinPcap API-compatible mode\" when installing)"
@@ -54,7 +54,7 @@ func loadNpcap() error {
 			{"pcap_set_immediate_mode", &npcap.setImmediate}, {"pcap_set_buffer_size", &npcap.setBuffer},
 			{"pcap_activate", &npcap.activate}, {"pcap_setfilter", &npcap.setfilter},
 			{"pcap_next_ex", &npcap.nextEx}, {"pcap_datalink", &npcap.datalink},
-			{"pcap_close", &npcap.close}, {"pcap_geterr", &npcap.geterr},
+			{"pcap_close", &npcap.close}, {"pcap_geterr", &npcap.geterr}, {"pcap_stats", &npcap.stats},
 		} {
 			if *p.dst, err = dll.FindProc(p.name); err != nil {
 				npcap.err = fmt.Errorf("wpcap.dll is too old (no %s): update Npcap from https://npcap.com", p.name)
@@ -112,11 +112,20 @@ type bpfProgram struct {
 }
 
 type npcapSource struct {
-	p      uintptr
-	link   int
-	closed atomic.Bool
-	done   atomic.Bool
+	p       uintptr
+	link    int
+	closed  atomic.Bool
+	done    atomic.Bool
+	dropped atomic.Uint64
+	statAt  time.Time
 }
+
+// pcapStat is Windows' struct pcap_stat, which has a fourth field.
+type pcapStat struct {
+	Recv, Drop, IfDrop, Capt uint32
+}
+
+func (n *npcapSource) Dropped() uint64 { return n.dropped.Load() }
 
 func cstr(s string) *byte {
 	b, _ := windows.BytePtrFromString(s)
@@ -147,9 +156,13 @@ func openLive(ifc Interface) (Source, error) {
 	// Without promiscuous mode the adapter's own multicast filter drops the
 	// groups this machine has not joined.
 	npcap.setPromisc.Call(p, 1)
-	npcap.setTimeout.Call(p, 250)
-	npcap.setImmediate.Call(p, 1)
-	npcap.setBuffer.Call(p, 32<<20)
+	// Not immediate mode: Npcap then hands over packets in batches, which
+	// costs far fewer calls into the driver on a busy port. The driver
+	// stamps each packet, so batching changes no timing. A large kernel
+	// buffer rides out the moments the monitor is busy.
+	npcap.setTimeout.Call(p, 100)
+	npcap.setImmediate.Call(p, 0)
+	npcap.setBuffer.Call(p, 64<<20)
 	if r, _, _ := npcap.activate.Call(p); int32(r) < 0 {
 		msg := n.lastError()
 		npcap.close.Call(p)
@@ -180,6 +193,15 @@ func (n *npcapSource) Next() (Frame, error) {
 		if n.closed.Load() {
 			n.finish()
 			return Frame{}, ErrClosed
+		}
+		// Statistics are read by the goroutine that reads packets, so the
+		// handle is never used from two threads at once.
+		if now := time.Now(); now.Sub(n.statAt) >= time.Second {
+			n.statAt = now
+			var st pcapStat
+			if r, _, _ := npcap.stats.Call(n.p, uintptr(unsafe.Pointer(&st))); r == 0 {
+				n.dropped.Store(uint64(st.Drop) + uint64(st.IfDrop))
+			}
 		}
 		var hdr *pcapPkthdr
 		var data *byte

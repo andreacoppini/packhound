@@ -40,7 +40,8 @@ func LooksLikeTS(b []byte) bool {
 type PID struct {
 	PID        uint16
 	Packets    uint64
-	CCErrors   uint64
+	CCErrors   uint64 // every continuity error, as TR 101 290 counts them
+	CCQuirks   uint64 // of which: the counter advanced on a packet with no payload
 	Scrambled  bool
 	Kind       string // "PAT", "PMT", "H.264 video" ...
 	Lang       string
@@ -85,11 +86,15 @@ type Analyzer struct {
 
 	Packets      uint64
 	SyncErrors   uint64
-	CCErrors     uint64
+	CCErrors     uint64 // every continuity error, as TR 101 290 counts them
+	CCQuirks     uint64 // of which: encoder quirks, nothing missing
+	Missing      uint64 // TS packets the counter jumps say never arrived
 	TEIErrors    uint64 // packets the modulator marked uncorrectable
 	ccThisSecond uint64
-	ccWindow     [60]uint32 // CC errors per second, last minute
+	ccWindow     [60]uint32 // CC errors that mean loss, per second, last minute
 	ccIdx        int
+	qThisSecond  uint64
+	qWindow      [60]uint32 // quirks per second, last minute
 }
 
 func NewAnalyzer() *Analyzer {
@@ -135,9 +140,24 @@ func (a *Analyzer) Tick() {
 	a.ccIdx = (a.ccIdx + 1) % len(a.ccWindow)
 	a.ccWindow[a.ccIdx] = uint32(a.ccThisSecond)
 	a.ccThisSecond = 0
+	a.qWindow[a.ccIdx] = uint32(a.qThisSecond)
+	a.qThisSecond = 0
 }
 
-// CCLastMinute is the number of continuity errors in the last 60 seconds.
+// QuirksLastMinute counts, over the last 60 seconds, continuity errors that
+// lose nothing: the encoder advanced the counter on a packet carrying only an
+// adaptation field (typically a PCR), which the standard says it must not.
+// Decoders ignore it, so it is reported apart from loss.
+func (a *Analyzer) QuirksLastMinute() uint64 {
+	n := a.qThisSecond
+	for _, c := range a.qWindow {
+		n += uint64(c)
+	}
+	return n
+}
+
+// CCLastMinute is the number of continuity errors in the last 60 seconds
+// that mean packets went missing (quirks are not counted).
 func (a *Analyzer) CCLastMinute() uint64 {
 	var n uint64
 	for _, c := range a.ccWindow {
@@ -218,16 +238,20 @@ func (a *Analyzer) packet(b []byte) {
 		switch {
 		case p.lastCC < 0 || discontinuity:
 		case !hasPayload:
-			if cc != p.lastCC {
-				a.ccError(p)
+			switch cc {
+			case p.lastCC:
+			case (p.lastCC + 1) & 0x0f:
+				a.ccQuirk(p)
+			default:
+				a.ccError(p, int((cc-p.lastCC-1)&0x0f))
 			}
 		case cc == p.lastCC:
 			if p.dupSeen {
-				a.ccError(p)
+				a.ccError(p, 0)
 			}
 			p.dupSeen = true
 		case cc != (p.lastCC+1)&0x0f:
-			a.ccError(p)
+			a.ccError(p, int((cc-p.lastCC-1)&0x0f))
 			p.dupSeen = false
 		default:
 			p.dupSeen = false
@@ -251,10 +275,21 @@ func (a *Analyzer) packet(b []byte) {
 	}
 }
 
-func (a *Analyzer) ccError(p *PID) {
+// ccError counts a continuity error that means loss; missing is how many
+// packets the jump skips (modulo 16, so a lower bound).
+func (a *Analyzer) ccError(p *PID, missing int) {
 	p.CCErrors++
 	a.CCErrors++
+	a.Missing += uint64(missing)
 	a.ccThisSecond++
+}
+
+func (a *Analyzer) ccQuirk(p *PID) {
+	p.CCErrors++
+	p.CCQuirks++
+	a.CCErrors++
+	a.CCQuirks++
+	a.qThisSecond++
 }
 
 // psi reassembles sections on a PSI PID and hands complete ones on.

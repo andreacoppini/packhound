@@ -80,6 +80,40 @@ type Monitor struct {
 	started time.Time
 	now     time.Time // latest tick
 	dropped uint64    // packets for streams beyond maxStreams
+
+	// Packets lost on this machine before they could be read: the capture
+	// buffer overflowed. Errors seen while this happens may not be real.
+	localDrops    uint64
+	localWin      window
+	localUnlogged uint64
+	localLogged   time.Time
+}
+
+// NoteLocalDrops records n packets lost on this machine in the second ending
+// at now. Call it once a second, before Tick, with zero when nothing was lost.
+func (m *Monitor) NoteLocalDrops(now time.Time, n uint64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.localWin.roll()
+	if n == 0 {
+		if m.localUnlogged > 0 && now.Sub(m.localLogged) >= 10*time.Second {
+			m.logLocal(now)
+		}
+		return
+	}
+	m.localDrops += n
+	m.localWin.add(uint32(n))
+	m.localUnlogged += n
+	// One line at most every ten seconds, however long the overload lasts.
+	if now.Sub(m.localLogged) >= 10*time.Second {
+		m.logLocal(now)
+	}
+}
+
+func (m *Monitor) logLocal(now time.Time) {
+	m.logf(now, "This machine dropped %d packets before Packhound could read them (capture buffer full). Errors on streams at the same time may not be on the network.", m.localUnlogged)
+	m.localUnlogged = 0
+	m.localLogged = now
 }
 
 type fragKey struct {
@@ -156,6 +190,7 @@ func (m *Monitor) Reset() {
 	m.log = nil
 	m.started = time.Time{}
 	m.dropped = 0
+	m.localDrops, m.localWin, m.localUnlogged, m.localLogged = 0, window{}, 0, time.Time{}
 }
 
 // Ingest takes one packet. The packet's payload is not kept.

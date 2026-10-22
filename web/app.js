@@ -330,6 +330,12 @@ function render() {
     $("dot").className = "dot";
   }
   const t = snap.totals;
+  const ld = $("localDrop");
+  ld.hidden = !(t.localDropsMin > 0);
+  if (t.localDropsMin > 0) {
+    ld.textContent = `This PC dropped ${t.localDropsMin.toLocaleString()} packets in the last minute`;
+    ld.title = "The capture buffer overflowed before Packhound could read these packets. Errors on streams while this happens may be on this machine, not on the network.";
+  }
   $("cStreams").textContent = t.streams;
   $("cSenders").textContent = t.senders;
   $("cRate").textContent = fmtRate(t.bps);

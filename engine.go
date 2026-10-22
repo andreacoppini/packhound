@@ -163,13 +163,15 @@ func (e *engine) start(req startRequest) error {
 	e.done, e.stopTick = make(chan struct{}), make(chan struct{})
 	e.mu.Unlock()
 
-	go e.tick(e.stopTick)
+	go e.tick(e.stopTick, src)
 	go e.read(src, e.done)
 	return nil
 }
 
 // tick drives the monitor's once-a-second work, just after each second turns.
-func (e *engine) tick(stop chan struct{}) {
+func (e *engine) tick(stop chan struct{}, src capture.Source) {
+	d, _ := src.(capture.Dropper)
+	var seen uint64
 	for {
 		now := time.Now()
 		next := now.Truncate(time.Second).Add(time.Second + 20*time.Millisecond)
@@ -177,7 +179,15 @@ func (e *engine) tick(stop chan struct{}) {
 		case <-stop:
 			return
 		case <-time.After(next.Sub(now)):
-			e.mon.Tick(time.Now())
+			t := time.Now()
+			var n uint64
+			if d != nil {
+				if v := d.Dropped(); v > seen {
+					n, seen = v-seen, v
+				}
+			}
+			e.mon.NoteLocalDrops(t, n)
+			e.mon.Tick(t)
 		}
 	}
 }

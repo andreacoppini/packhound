@@ -230,3 +230,33 @@ func TestEmptySnapshotListsAreNotNil(t *testing.T) {
 		t.Fatal("an empty snapshot must have empty lists, not nil: the console reads them as JSON arrays")
 	}
 }
+
+func TestDuplicatedDatagramsAreNotCCErrors(t *testing.T) {
+	m := New(DefaultConfig())
+	mux := mpegts.NewMuxer()
+	src, dst := netip.MustParseAddr("10.0.0.1"), netip.MustParseAddr("239.1.1.1")
+	now := t0
+	for i := 0; i < 200; i++ {
+		var b []byte
+		for j := 0; j < 7; j++ {
+			b = append(b, mux.PES(0x100, 0xe0, []byte{byte(i), byte(j)})[0]...)
+		}
+		p := &pkt.Packet{Time: now, Src: src, Dst: dst, Proto: pkt.ProtoUDP, DstPort: 5000, IPLen: 28 + len(b), Payload: b}
+		m.Ingest(p)
+		if i%10 == 0 {
+			m.Ingest(p) // the network delivers this one twice
+		}
+		now = now.Add(5 * time.Millisecond)
+	}
+	m.Tick(now.Add(time.Second))
+	snap := m.Snapshot("239.1.1.1|17|5000", 60)
+	r := snap.Rows[0]
+	if r.Errors != "20 /min" || !strings.Contains(r.Reason, "duplicated datagrams") {
+		t.Fatalf("errors %q reason %q", r.Errors, r.Reason)
+	}
+	for _, kv := range snap.Detail.KV {
+		if kv.K == "CC errors (loss)" && !strings.HasPrefix(kv.V, "0 in the last minute") {
+			t.Fatalf("duplicates counted as CC errors: %s", kv.V)
+		}
+	}
+}

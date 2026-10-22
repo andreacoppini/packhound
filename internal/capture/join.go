@@ -8,6 +8,7 @@ import (
 	"net/netip"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/net/ipv4"
@@ -30,7 +31,13 @@ type Joined struct {
 	once   sync.Once
 	wg     sync.WaitGroup
 	Failed []string // groups that could not be joined, and why
+
+	dropped atomic.Uint64
 }
+
+// Dropped counts datagrams received but thrown away because the monitor
+// fell behind.
+func (j *Joined) Dropped() uint64 { return j.dropped.Load() }
 
 type joinPkt struct {
 	p   pkt.Packet
@@ -165,6 +172,7 @@ func (j *Joined) read(c net.PacketConn, g groups.Group) {
 			return
 		default:
 			j.pool.Put(jp) // the monitor is behind; drop rather than block the socket
+			j.dropped.Add(1)
 		}
 	}
 }

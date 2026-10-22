@@ -130,3 +130,32 @@ func TestLooksLikeTS(t *testing.T) {
 		t.Fatal("non-TS recognised")
 	}
 }
+
+func TestAdaptationOnlyPackets(t *testing.T) {
+	m := NewMuxer()
+	a := NewAnalyzer()
+	feed := func(pk ...[]byte) {
+		for _, p := range pk {
+			a.Feed(p)
+		}
+	}
+	pes := func() []byte { return m.PES(0x100, 0xe0, make([]byte, 100))[0] }
+	// Compliant: the counter stays put on a PCR-only packet.
+	feed(pes(), m.AdaptationOnly(0x100, false), pes(), m.AdaptationOnly(0x100, false), pes())
+	if a.CCErrors != 0 {
+		t.Fatalf("compliant stream: %d errors", a.CCErrors)
+	}
+	// The common encoder quirk: the counter advances on PCR-only packets.
+	feed(m.AdaptationOnly(0x100, true), pes(), m.AdaptationOnly(0x100, true), pes())
+	if a.CCErrors != 2 || a.CCQuirks != 2 || a.CCLastMinute() != 0 || a.QuirksLastMinute() != 2 || a.Missing != 0 {
+		t.Fatalf("quirk: errors %d quirks %d loss/min %d quirks/min %d missing %d", a.CCErrors, a.CCQuirks, a.CCLastMinute(), a.QuirksLastMinute(), a.Missing)
+	}
+	// Real loss: three packets never arrive.
+	pes()
+	pes()
+	pes()
+	feed(pes())
+	if a.CCLastMinute() != 1 || a.Missing != 3 {
+		t.Fatalf("loss: per minute %d, missing %d", a.CCLastMinute(), a.Missing)
+	}
+}

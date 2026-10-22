@@ -71,6 +71,7 @@ button.small { padding: 3px 9px; font-size: 12px; }
 .counter.err b { color: var(--muted); }
 .counter.err.live b { color: var(--err); }
 
+.localdrop { font-size: 12px; color: #f5c451; background: #3a2e0d; border: 1px solid #6b5418; border-radius: 6px; padding: 3px 9px; }
 .update {
   margin-left: 6px; padding: 2px 9px; border-radius: 999px;
   font-size: 12px; font-weight: 600; text-decoration: none;

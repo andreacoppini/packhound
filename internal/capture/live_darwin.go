@@ -54,12 +54,14 @@ func ioctl(fd uintptr, req uint, arg unsafe.Pointer) error {
 }
 
 type bpfDev struct {
-	f      *os.File
-	fd     uintptr
-	link   int
-	buf    []byte
-	pend   []byte // records not yet handed out
-	closed atomic.Bool
+	f       *os.File
+	fd      uintptr
+	link    int
+	buf     []byte
+	pend    []byte // records not yet handed out
+	closed  atomic.Bool
+	dropped atomic.Uint64
+	statAt  time.Time
 }
 
 func openLive(ifc Interface) (Source, error) {
@@ -82,10 +84,10 @@ func openLive(ifc Interface) (Source, error) {
 	if err := ioctl(fd, unix.BIOCSETIF, unsafe.Pointer(&ifr)); err != nil {
 		return fail("attaching to "+ifc.Name, err)
 	}
-	one, zero := uint32(1), uint32(0)
-	if err := ioctl(fd, unix.BIOCIMMEDIATE, unsafe.Pointer(&one)); err != nil {
-		return fail("setting immediate mode", err)
-	}
+	// Not immediate mode: reads then return a buffer of packets at a time
+	// (or at the read timeout), which costs far fewer system calls on a busy
+	// port. The kernel stamps each packet, so batching changes no timing.
+	zero := uint32(0)
 	_ = ioctl(fd, unix.BIOCSSEESENT, unsafe.Pointer(&zero)) // only what is received
 	// There is no all-multicast switch for BPF; without promiscuous mode the
 	// NIC drops groups this host has not joined.
@@ -152,6 +154,13 @@ func (b *bpfDev) Next() (Frame, error) {
 			b.pend = h[next:]
 			return Frame{Data: data, Link: b.link, Time: time.Unix(int64(sec), int64(usec)*1000)}, nil
 		}
+		if now := time.Now(); now.Sub(b.statAt) >= time.Second {
+			b.statAt = now
+			var st unix.BpfStat
+			if ioctl(b.fd, unix.BIOCGSTATS, unsafe.Pointer(&st)) == nil {
+				b.dropped.Store(uint64(st.Drop))
+			}
+		}
 		n, err := syscall.Read(int(b.fd), b.buf)
 		if err != nil {
 			if errors.Is(err, syscall.EINTR) || errors.Is(err, syscall.EAGAIN) {
@@ -165,6 +174,8 @@ func (b *bpfDev) Next() (Frame, error) {
 		b.pend = b.buf[:n]
 	}
 }
+
+func (b *bpfDev) Dropped() uint64 { return b.dropped.Load() }
 
 func (b *bpfDev) Close() error {
 	if b.closed.Swap(true) {

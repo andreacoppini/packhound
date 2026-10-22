@@ -44,6 +44,14 @@ type Source interface {
 	Close() error
 }
 
+// Dropper is implemented by sources that know how many packets were lost on
+// this machine, before Packhound could read them: the OS or capture driver's
+// buffer overflowed. Such losses show up as errors on streams that are in
+// fact fine on the wire, so they are reported apart.
+type Dropper interface {
+	Dropped() uint64 // since the source opened
+}
+
 // ErrClosed is returned by Next once the source has been closed.
 var ErrClosed = errors.New("capture closed")
 

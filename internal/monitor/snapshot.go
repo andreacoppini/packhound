@@ -58,6 +58,10 @@ type Totals struct {
 	PPS      float64 `json:"pps"`
 	Problems int     `json:"problems"` // streams Lost or Degraded now
 	Dropped  uint64  `json:"dropped,omitempty"`
+	// Packets this machine lost before reading them: in total, and in the
+	// last minute.
+	LocalDrops    uint64 `json:"localDrops"`
+	LocalDropsMin uint64 `json:"localDropsMin"`
 }
 
 // Snapshot is everything the console needs for one refresh.
@@ -106,6 +110,8 @@ func (m *Monitor) Snapshot(sel string, window int) Snapshot {
 	}
 	snap.Totals.Senders = len(senders)
 	snap.Totals.Dropped = m.dropped
+	snap.Totals.LocalDrops = m.localDrops
+	snap.Totals.LocalDropsMin = m.localWin.minute()
 	sort.Slice(snap.Rows, func(i, j int) bool {
 		if snap.Rows[i].BPS != snap.Rows[j].BPS {
 			return snap.Rows[i].BPS > snap.Rows[j].BPS
@@ -211,6 +217,9 @@ func (s *Stream) detail(r Row, window int) *StreamDetail {
 	}
 	if s.reason != "" {
 		d.add("Problem", s.reason)
+		if n := s.m.localWin.minute(); n > 0 && s.kind.media() {
+			d.add("Caution", fmt.Sprintf("this machine dropped %d packets in the last minute before reading them, so some of these errors may be local, not on the network", n))
+		}
 	}
 	if s.dec != nil {
 		s.dec.describe(s, &d.Detail)

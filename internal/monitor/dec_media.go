@@ -31,6 +31,18 @@ type tsDec struct {
 	secBytes float64
 	df       float64 // milliseconds, latest whole second
 	haveDF   bool
+
+	// Duplicated datagrams: the same datagram arriving twice, from a loop
+	// or two paths to the receiver. Fed to the analyser twice it would read
+	// as continuity errors, so a repeat is counted and skipped.
+	// Only the last three are kept: a real duplicate arrives straight after
+	// its original, while three is too short for an innocent repeat. No
+	// non-null PID's counters can come back round in under four datagrams,
+	// so two distinct datagrams are never identical within the window.
+	recent [3]uint64
+	next   int
+	dups   uint64
+	dupWin window
 }
 
 func newTS() *tsDec { return &tsDec{a: mpegts.NewAnalyzer()} }
@@ -38,6 +50,17 @@ func newTS() *tsDec { return &tsDec{a: mpegts.NewAnalyzer()} }
 func (t *tsDec) feed(_ *Stream, p *pkt.Packet) { t.feedTS(p.Time, p.Payload) }
 
 func (t *tsDec) feedTS(at time.Time, b []byte) {
+	if h, ok := datagramHash(b); ok {
+		for _, x := range t.recent {
+			if x == h {
+				t.dups++
+				t.dupWin.add(1)
+				return
+			}
+		}
+		t.recent[t.next] = h
+		t.next = (t.next + 1) % len(t.recent)
+	}
 	if t.ivStart.IsZero() {
 		t.ivStart = at
 	}
@@ -52,8 +75,30 @@ func (t *tsDec) feedTS(at time.Time, b []byte) {
 	t.a.Feed(b)
 }
 
+// datagramHash identifies a datagram for duplicate detection. A datagram of
+// nothing but null packets is legitimately repeated, so it is not hashed.
+func datagramHash(b []byte) (uint64, bool) {
+	real := false
+	for i := 0; i+3 < len(b); i += mpegts.PacketSize {
+		if (uint16(b[i+1]&0x1f)<<8 | uint16(b[i+2])) != mpegts.NullPID {
+			real = true
+			break
+		}
+	}
+	if !real {
+		return 0, false
+	}
+	h := uint64(14695981039346656037)
+	for _, c := range b {
+		h ^= uint64(c)
+		h *= 1099511628211
+	}
+	return h, true
+}
+
 func (t *tsDec) tick(_ *Stream, now time.Time) {
 	t.a.Tick()
+	t.dupWin.roll()
 	if t.drain > 0 && t.ivBytes > 0 {
 		t.df = (t.vbMax - t.vbMin) / t.drain * 1000
 		t.haveDF = true
@@ -65,7 +110,12 @@ func (t *tsDec) tick(_ *Stream, now time.Time) {
 
 func (t *tsDec) name(*Stream) string { return t.a.ServiceName() }
 
-func (t *tsDec) errorsLastMinute() (uint64, string) { return t.a.CCLastMinute(), "CC errors" }
+func (t *tsDec) errorsLastMinute() (uint64, string) {
+	if d := t.dupWin.minute(); d > 0 {
+		return t.a.CCLastMinute() + d, "CC errors / duplicated datagrams"
+	}
+	return t.a.CCLastMinute(), "CC errors"
+}
 
 func (t *tsDec) describe(s *Stream, d *Detail) {
 	for _, sv := range t.a.Services() {
@@ -88,7 +138,14 @@ func (t *tsDec) describe(s *Stream, d *Detail) {
 	if t.haveDF {
 		d.add("MDI (DF : MLR)", fmt.Sprintf("%.1f ms : %d", t.df, t.a.CCLastSecond()))
 	}
-	d.add("CC errors", fmt.Sprintf("%d in the last minute · %d total", t.a.CCLastMinute(), t.a.CCErrors))
+	loss := t.a.CCErrors - t.a.CCQuirks
+	d.add("CC errors (loss)", fmt.Sprintf("%d in the last minute · %d total · at least %d TS packets missing", t.a.CCLastMinute(), loss, t.a.Missing))
+	if t.a.CCQuirks > 0 {
+		d.add("CC quirks (no loss)", fmt.Sprintf("%d in the last minute · %d total: the encoder advances the counter on PCR-only packets; decoders ignore it", t.a.QuirksLastMinute(), t.a.CCQuirks))
+	}
+	if t.dups > 0 {
+		d.add("Duplicated datagrams", fmt.Sprintf("%d in the last minute · %d total: the same datagram arrives twice (a loop, or two paths)", t.dupWin.minute(), t.dups))
+	}
 	if t.a.SyncErrors > 0 {
 		d.add("Sync errors", fmt.Sprint(t.a.SyncErrors))
 	}
@@ -96,7 +153,7 @@ func (t *tsDec) describe(s *Stream, d *Detail) {
 		d.add("Transport errors (TEI)", fmt.Sprint(t.a.TEIErrors))
 	}
 
-	tb := Table{Title: "PIDs in the transport stream", Cols: []string{"PID", "Content", "Program", "Rate", "CC errors"}}
+	tb := Table{Title: "PIDs in the transport stream", Cols: []string{"PID", "Content", "Program", "Rate", "CC errors (loss)", "CC quirks"}}
 	var scrambled []string
 	for _, p := range t.a.PIDs() {
 		kind := p.Kind
@@ -113,14 +170,14 @@ func (t *tsDec) describe(s *Stream, d *Detail) {
 			kind += " · scrambled"
 			scrambled = append(scrambled, fmt.Sprintf("0x%04X", p.PID))
 		}
-		prog, cc := "", fmt.Sprint(p.CCErrors)
+		prog, cc, q := "", fmt.Sprint(p.CCErrors-p.CCQuirks), fmt.Sprint(p.CCQuirks)
 		if p.Program != 0 {
 			prog = fmt.Sprint(p.Program)
 		}
 		if p.PID == mpegts.NullPID {
-			cc = "-"
+			cc, q = "-", "-"
 		}
-		tb.Rows = append(tb.Rows, []string{fmt.Sprintf("0x%04X", p.PID), kind, prog, FormatRate(p.Rate()), cc})
+		tb.Rows = append(tb.Rows, []string{fmt.Sprintf("0x%04X", p.PID), kind, prog, FormatRate(p.Rate()), cc, q})
 	}
 	if len(scrambled) > 0 {
 		d.add("Scrambled PIDs", strings.Join(scrambled, ", "))

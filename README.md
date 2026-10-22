@@ -81,7 +81,7 @@ work, and IPv6 goes in brackets:
 | Rate | bits per second at the IP layer, which is what the stream costs on the wire; the payload rate is in the detail panel |
 | Packets/s, Avg size | per second, and the IP datagram size: 1,344 bytes is seven TS packets over UDP, 1,356 the same over RTP |
 | Jitter | how much the gap between packets varies, for video and audio |
-| Errors | continuity-counter errors (MPEG-TS) and lost packets (RTP) in the last minute |
+| Errors | in the last minute: continuity-counter errors that mean lost packets (MPEG-TS), lost packets (RTP), and datagrams that arrived twice |
 | Status | **Receiving**, **Degraded** (errors, or a rate well below its usual), **Lost** (silent for longer than the alert setting), or for protocols that speak when they have something to say, **Periodic** and **Quiet** |
 
 Click a row for its detail: a rate graph over the last minute, ten minutes or
@@ -91,6 +91,14 @@ hour, and what the protocol says.
   content, language and rate; the picture size read from the H.264 stream;
   continuity errors per PID; the Media Delivery Index (delay factor and loss
   rate, RFC 4445); RTP losses and reordering.
+- **Telling real errors from false alarms:** a continuity error is only
+  counted as one when packets are actually missing. Many encoders advance the
+  counter on packets that carry only a PCR, which the standard forbids but
+  every decoder ignores; those are shown separately as *CC quirks (no loss)*.
+  A datagram that arrives twice (a loop, or two paths) is counted as
+  duplicated rather than as a run of CC errors. If the capturing machine
+  itself drops packets because its buffer overflowed, the header says so,
+  since the errors it causes are not on the network.
 - **AES67 and RTP audio:** format, packet time and sender, named from SAP.
 - **mDNS:** every service announced (AirPlay, Chromecast, printers, Sonos,
   HomeKit and so on) with its host, address and port, and what is being asked
