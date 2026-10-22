@@ -1,3 +1,5 @@
+**Packhound 1.1.1** fixes the console's bottom panel: its tables (services, PIDs, senders, alerts) jumped back to the top every second as the page refreshed, so they could not be scrolled. They now keep their place, and do not redraw at all while nothing changes. 1.1.0's notes follow.
+
 **Packhound 1.1.0: Dante.**
 
 - **Dante multicast flows** are named after the device that sends them, so a device's flows sort together.

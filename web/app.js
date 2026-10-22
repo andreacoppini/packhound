@@ -478,6 +478,24 @@ function chartHTML(d) {
 <div class="gcap mono"><span>−${label}</span><span>now</span></div>`;
 }
 
+// setPane replaces a drawer pane's content without losing the reader's
+// place: nothing happens when the content is unchanged (as when listening has
+// stopped), and otherwise the pane and every scrolling table in it keep their
+// scroll positions. A different stream (key) starts again at the top.
+function setPane(el, html, key) {
+  if (el._html === html) return;
+  const same = el._key === key;
+  const boxes = same ? [...el.querySelectorAll(".box")].map((b) => [b.scrollTop, b.scrollLeft]) : [];
+  const top = same ? el.scrollTop : 0;
+  el.innerHTML = html;
+  el._html = html;
+  el._key = key;
+  el.querySelectorAll(".box").forEach((b, i) => {
+    if (boxes[i]) [b.scrollTop, b.scrollLeft] = boxes[i];
+  });
+  el.scrollTop = top;
+}
+
 function renderDrawer() {
   if (!ui.last) return;
   const { snap } = ui.last;
@@ -485,27 +503,27 @@ function renderDrawer() {
   if (ui.tab === "detail") {
     const p = $("pane-detail");
     if (!d) {
-      p.innerHTML = `<div class="empty">Pick a stream in the table to see its detail.</div>`;
+      setPane(p, `<div class="empty">Pick a stream in the table to see its detail.</div>`, "");
       return;
     }
     const kv = (d.kv || []).map((x) => `<dt>${esc(x.k)}</dt><dd>${esc(x.v)}</dd>`).join("");
-    p.innerHTML = `<div class="detail">
+    setPane(p, `<div class="detail">
 <div class="facts"><div class="dhead"><span class="g">${esc(d.group)}</span><span class="badge k-${d.kind}">${esc(d.type)}</span><span class="st st-${d.statusLevel}">${esc(d.status)}</span></div>
 ${d.playURL ? `<div class="play">${ui.server ? "" : `<button class="small primary" data-vlc="${esc(d.key)}" title="Start VLC on this computer playing ${esc(d.playURL)}">Open in VLC</button>`}<a class="small" href="/api/playlist?key=${encodeURIComponent(d.key)}" title="A playlist file any player opens">Playlist .m3u</a><button class="small" data-copy="${esc(d.playURL)}" title="Copy the URL, to paste into a player">Copy URL</button><span class="m url">${esc(d.playURL)}</span></div>` : ""}
 <div class="dname">${esc(d.name)}</div><dl class="kv">${kv}</dl></div>
 <div class="graph">${chartHTML(d)}</div>
-<div class="tables">${(d.tables || []).map(tableHTML).join("")}</div></div>`;
+<div class="tables">${(d.tables || []).map(tableHTML).join("")}</div></div>`, d.key);
   } else if (ui.tab === "senders") {
-    $("pane-senders").innerHTML = d ? `<div class="detail"><div class="tables">${tableHTML(d.senders) || '<div class="empty">No senders.</div>'}</div></div>` : `<div class="empty">Pick a stream in the table.</div>`;
+    setPane($("pane-senders"), d ? `<div class="detail"><div class="tables">${tableHTML(d.senders) || '<div class="empty">No senders.</div>'}</div></div>` : `<div class="empty">Pick a stream in the table.</div>`, d ? d.key : "");
   } else if (ui.tab === "alerts") {
     const a = snap.alerts.slice().reverse();
-    $("pane-alerts").innerHTML = a.length
+    setPane($("pane-alerts"), a.length
       ? a.map((x) => `<div class="alert"><span class="when">${hhmmss(x.time)}</span><span><span class="st st-${x.level}">${{ ok: "OK", warn: "Warning", err: "Problem" }[x.level]}</span></span><span class="grp" data-key="${esc(x.key)}">${esc(x.group)}</span><span>${esc(x.name ? x.name + ": " : "")}${esc(x.message)}</span></div>`).join("")
-      : `<div class="empty">No alerts. Video and audio streams raise one when they stop, degrade or gain a sender.</div>`;
+      : `<div class="empty">No alerts. Video and audio streams raise one when they stop, degrade or gain a sender.</div>`, "alerts");
   } else {
     const p = $("pane-log");
     const atEnd = p.scrollTop + p.clientHeight >= p.scrollHeight - 20;
-    p.innerHTML = snap.log.map((l) => `<span class="t">${hhmmss(l.time)}</span>  ${esc(l.message)}`).join("\n");
+    setPane(p, snap.log.map((l) => `<span class="t">${hhmmss(l.time)}</span>  ${esc(l.message)}`).join("\n"), "log");
     if (atEnd) p.scrollTop = p.scrollHeight;
   }
 }

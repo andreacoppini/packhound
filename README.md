@@ -325,6 +325,14 @@ join mode works the same on all three.
 
 ## Changelog
 
+What's new in 1.1.1 (2026-10-22):
+
+```
+*) Console: the tables in the bottom panel keep their scroll position
+   when the page refreshes, instead of jumping back to the top every
+   second.
+```
+
 What's new in 1.1.0 (2026-10-22):
 
 ```
