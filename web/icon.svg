@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <rect width="64" height="64" rx="14" fill="#16314f"/>
+  <!-- a hound's head in profile, nose to the right, sniffing three rising waves -->
+  <path d="M14 44c0-12 7-21 18-21 4 0 8 1 11 4l7 1c2 0 3 2 3 3v3c0 2-2 3-4 3h-6l-3 4c-1 2-3 3-5 3h-4l-3 8h-9c-3 0-5-2-5-5z" fill="#8cc4ff"/>
+  <path d="M20 26c-3 2-5 7-4 12 3-1 6-5 7-10z" fill="#4da3ff"/>
+  <circle cx="38" cy="30" r="2" fill="#0e1116"/>
+  <path d="M51 20c2-2 2-5 0-7M55 23c4-4 4-10 0-14M59 26c6-6 6-16 0-22" stroke="#3ecf8e" stroke-width="2.4" fill="none" stroke-linecap="round"/>
+</svg>

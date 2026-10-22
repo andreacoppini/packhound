@@ -1,0 +1,10 @@
+# Release artefacts, built by .github/workflows/release.yml
+/dist/
+
+# Local builds
+/packhound
+/packhound.exe
+/packhound-*
+
+# Recordings made while testing
+*.pcap

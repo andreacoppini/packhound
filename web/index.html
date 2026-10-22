@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Packhound</title>
+<link rel="stylesheet" href="style.css">
+<link rel="icon" type="image/svg+xml" href="icon.svg">
+</head>
+<body>
+
+<header>
+  <div class="brand"><img src="icon.svg" alt="" width="20" height="20">Packhound <span id="ver"></span><a id="update" class="update" hidden target="_blank" rel="noopener"></a></div>
+  <button id="listen" class="primary">Listen</button>
+  <div class="state" id="state"><span class="dot" id="dot"></span><span id="stateText">Not listening</span></div>
+  <button id="record" title="Record the multicast traffic to a pcap file for Wireshark" disabled>Record</button>
+  <div class="counters">
+    <div class="counter"><b id="cStreams">0</b><i>streams</i></div>
+    <div class="counter"><b id="cSenders">0</b><i>senders</i></div>
+    <div class="counter acc"><b id="cRate">0</b><i>total rate</i></div>
+    <div class="counter"><b id="cPps">0</b><i>packets/s</i></div>
+    <div class="counter err"><b id="cProblems">0</b><i>problems</i></div>
+  </div>
+  <button id="expCsv" title="Download the stream table as CSV">CSV</button>
+  <button id="expJson" title="Download the stream table and alerts as JSON">JSON</button>
+</header>
+
+<div class="app">
+<aside id="aside">
+  <section>
+    <h2>Listen</h2>
+    <div class="body">
+      <label><span>Network interface</span><select id="iface"></select></label>
+      <div class="seg">
+        <label class="check"><input type="radio" name="mode" value="capture" checked>
+          <span><b>Capture everything</b> · every multicast frame the port receives, no join needed</span></label>
+        <label class="check"><input type="radio" name="mode" value="join">
+          <span><b>Join groups only</b> · no driver or admin rights; sees just the groups listed below</span></label>
+        <label class="check"><input type="radio" name="mode" value="demo">
+          <span><b>Demo</b> · made-up traffic, to try the console</span></label>
+      </div>
+      <div class="hint warn" id="liveWhy" hidden></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Groups to join</h2>
+    <div class="body">
+      <textarea id="groups" rows="6" spellcheck="false" placeholder="239.10.1.1-239.10.1.40:5000&#10;239.10.2.20:5004&#10;[ff02::fb]:5353"></textarea>
+      <div class="row"><button id="addCommon">Add discovery groups</button><button id="clearGroups">Clear</button></div>
+      <label class="check" id="joinTooRow"><input type="checkbox" id="joinToo" checked> Send IGMP/MLD joins for these (pulls them through snooping switches)</label>
+      <div class="hint">One per line: a group and UDP port. Ranges (239.1.1.1-40:5000) and blocks (239.1.1.0/28:5000) work; IPv6 goes in brackets.</div>
+      <div class="hint warn" id="groupErr" hidden></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Alerts</h2>
+    <div class="body">
+      <label><span>Video or audio stream is lost after (seconds of silence)</span><input type="number" id="silentAfter" min="1" step="1"></label>
+      <label><span>Degraded when the rate falls below its usual by (%)</span><input type="number" id="dropPct" min="0" max="100" step="5"></label>
+      <label><span>Degraded when errors in a minute exceed</span><input type="number" id="errPerMin" min="0" step="1"></label>
+      <label class="check"><input type="checkbox" id="newSenders"> Alert when a video or audio group gains a second sender</label>
+      <div class="hint">Discovery and control protocols speak when they have something to say, so they are never alarmed; they show as Quiet after five silent minutes.</div>
+    </div>
+  </section>
+
+  <section class="collapsed">
+    <h2>Display</h2>
+    <div class="body">
+      <label><span>Rates averaged over</span>
+        <select id="avgSeconds"><option value="1">1 second</option><option value="5">5 seconds</option><option value="10">10 seconds</option></select></label>
+      <label class="check"><input type="checkbox" id="showLinkLocal" checked> Show link-local control traffic (224.0.0.x, ff02::)</label>
+    </div>
+  </section>
+</aside>
+
+<main>
+  <div class="tablebar">
+    <div class="famtabs" role="tablist">
+      <button class="fam on" data-fam="4" role="tab">IPv4 <span id="n4">0</span></button>
+      <button class="fam" data-fam="6" role="tab">IPv6 <span id="n6">0</span></button>
+    </div>
+    <input type="text" id="filter" placeholder="Filter by group, sender, name…" aria-label="Filter streams">
+    <div class="chips" id="chips"></div>
+    <span class="spacer"></span>
+    <span class="hint" id="nRows"></span>
+    <button id="clear" title="Forget every stream seen so far">Clear</button>
+  </div>
+  <div class="tablewrap" id="tablewrap">
+    <table id="tbl">
+      <thead><tr>
+        <th data-k="group">Group</th><th data-k="type">Type</th><th data-k="name">Name</th><th data-k="sender">Sender</th>
+        <th data-k="bps" class="num">Rate</th><th>Last 60 s</th><th data-k="pps" class="num">Packets/s</th>
+        <th data-k="avgSize" class="num">Avg size</th><th data-k="jitterMs" class="num">Jitter</th>
+        <th data-k="errors">Errors</th><th data-k="status" class="sorted">Status</th>
+      </tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <div class="empty" id="empty">Press <b>Listen</b> to start. Pick <b>Demo</b> to see what it looks like without a network.</div>
+  </div>
+
+  <div class="drawer" id="drawer">
+    <div class="tabs">
+      <div class="tab on" data-tab="detail">Detail</div>
+      <div class="tab" data-tab="alerts">Alerts<span class="n" id="nAlerts"></span></div>
+      <div class="tab" data-tab="senders">Senders</div>
+      <div class="tab" data-tab="log">Log</div>
+      <span class="spacer"></span>
+      <span class="segbtns" id="win"><button data-win="60" class="on">1 min</button><button data-win="600">10 min</button><button data-win="3600">1 h</button></span>
+      <button id="expand" class="small">Expand</button>
+    </div>
+    <div class="pane" id="pane-detail"></div>
+    <div class="pane" id="pane-alerts" hidden></div>
+    <div class="pane" id="pane-senders" hidden></div>
+    <div class="pane mono" id="pane-log" hidden></div>
+  </div>
+</main>
+</div>
+
+<div class="toast" id="toast" hidden></div>
+<script src="app.js"></script>
+</body>
+</html>
