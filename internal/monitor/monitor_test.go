@@ -223,3 +223,10 @@ func TestFragmentsFollowTheirFirst(t *testing.T) {
 		t.Fatalf("rows %+v", snap.Rows)
 	}
 }
+
+func TestEmptySnapshotListsAreNotNil(t *testing.T) {
+	snap := New(DefaultConfig()).Snapshot("", 60)
+	if snap.Rows == nil || snap.Alerts == nil || snap.Log == nil {
+		t.Fatal("an empty snapshot must have empty lists, not nil: the console reads them as JSON arrays")
+	}
+}

@@ -256,14 +256,23 @@ let polling = false;
 async function poll() {
   if (polling) return;
   polling = true;
+  let st;
   try {
-    const st = await api(`/api/state?sel=${encodeURIComponent(ui.sel)}&win=${ui.win}`);
+    st = await api(`/api/state?sel=${encodeURIComponent(ui.sel)}&win=${ui.win}`);
+  } catch (e) {
+    $("stateText").textContent = "Console disconnected: is Packhound still running?";
+    $("dot").className = "dot";
+    polling = false;
+    return;
+  }
+  // A fault in drawing the page is not a lost connection; say what it was.
+  try {
     ui.last = st;
     if (st.update) showUpdate(st.update);
     render();
   } catch (e) {
-    $("stateText").textContent = "Console disconnected: is Packhound still running?";
-    $("dot").className = "dot";
+    $("stateText").textContent = "Console error: " + e.message;
+    console.error(e);
   } finally {
     polling = false;
   }
@@ -290,6 +299,9 @@ function visibleRows() {
 function render() {
   if (!ui.last) return;
   const { engine: eng, snap } = ui.last;
+  snap.rows = snap.rows || [];
+  snap.alerts = snap.alerts || [];
+  snap.log = snap.log || [];
   ui.running = eng.running;
 
   // header

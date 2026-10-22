@@ -112,8 +112,10 @@ func (m *Monitor) Snapshot(sel string, window int) Snapshot {
 		}
 		return snap.Rows[i].Key < snap.Rows[j].Key
 	})
-	snap.Alerts = append([]Alert(nil), m.alerts...)
-	snap.Log = append([]LogLine(nil), m.log...)
+	// Empty lists, not nil: they are JSON for the console, which reads them
+	// as arrays.
+	snap.Alerts = append([]Alert{}, m.alerts...)
+	snap.Log = append([]LogLine{}, m.log...)
 	return snap
 }
 
