@@ -72,6 +72,8 @@ func runConsole(opt options) error {
 	mux.HandleFunc("/api/export", c.handleExport)
 	mux.HandleFunc("/api/record", c.handleRecord)
 	mux.HandleFunc("/api/recording", c.handleRecording)
+	mux.HandleFunc("/api/vlc", c.handleVLC)
+	mux.HandleFunc("/api/playlist", c.handlePlaylist)
 
 	fmt.Printf("Packhound %s\nConsole: %s\n(leave this window open; close it or press Ctrl-C to quit)\n", version, link)
 	if ok, why := capture.LiveAvailable(); !ok {

@@ -228,6 +228,11 @@ svg.spark { display: block; }
 .dhead { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .dhead .g { font-family: var(--mono); font-size: 15px; font-weight: 600; }
 .dname { color: #c3ccd8; }
+.play { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.play a.small { color: var(--text); background: var(--panel2); border: 1px solid var(--line); border-radius: 6px; padding: 3px 9px; font-size: 12px; text-decoration: none; }
+.play a.small:hover { background: #212a35; border-color: #35404e; }
+.play .url { color: var(--muted); font-size: 11.5px; }
+.playable { color: var(--muted); font-size: 9px; margin-left: 4px; }
 dl.kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; margin: 0; font-size: 12.5px; }
 dl.kv dt { color: var(--muted); }
 dl.kv dd { margin: 0; font-family: var(--mono); font-size: 12px; word-break: break-word; }

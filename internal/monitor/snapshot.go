@@ -3,6 +3,7 @@ package monitor
 import (
 	"fmt"
 	"math"
+	"net/netip"
 	"sort"
 	"time"
 
@@ -30,16 +31,19 @@ type Row struct {
 	ErrLevel string  `json:"errLevel"`
 	// Continuity errors in the last minute that the sender made: in the
 	// stream as sent, nothing lost on the network.
-	SourceErrors uint64    `json:"sourceErrors,omitempty"`
-	Status       Status    `json:"status"`
-	StatusLevel  string    `json:"statusLevel"`
-	Reason       string    `json:"reason,omitempty"`
-	Spark        []float64 `json:"spark"`
-	FirstSeen    time.Time `json:"firstSeen"`
-	LastSeen     time.Time `json:"lastSeen"`
-	Packets      uint64    `json:"packets"`
-	Bytes        uint64    `json:"bytes"`
-	VLAN         uint16    `json:"vlan,omitempty"`
+	SourceErrors uint64 `json:"sourceErrors,omitempty"`
+	// PlayURL opens the stream in a player such as VLC, for streams one can
+	// play: MPEG-TS over UDP or RTP.
+	PlayURL     string    `json:"playURL,omitempty"`
+	Status      Status    `json:"status"`
+	StatusLevel string    `json:"statusLevel"`
+	Reason      string    `json:"reason,omitempty"`
+	Spark       []float64 `json:"spark"`
+	FirstSeen   time.Time `json:"firstSeen"`
+	LastSeen    time.Time `json:"lastSeen"`
+	Packets     uint64    `json:"packets"`
+	Bytes       uint64    `json:"bytes"`
+	VLAN        uint16    `json:"vlan,omitempty"`
 }
 
 // StreamDetail is the detail panel for one stream.
@@ -160,6 +164,7 @@ func (s *Stream) row() Row {
 	if r.Proto == "" {
 		r.Proto = fmt.Sprintf("IP %d", s.key.Proto)
 	}
+	r.PlayURL = s.playURL()
 	if s.key.Dst == solicitedNode.Addr() {
 		r.Addr = solicitedNode.String()
 	}
@@ -297,4 +302,22 @@ func formatBytes(b uint64) string {
 		return fmt.Sprintf("%.1f kB", float64(b)/(1<<10))
 	}
 	return fmt.Sprintf("%d B", b)
+}
+
+// playURL is how VLC (and most players) are told to join the stream:
+// udp://@group:port for raw MPEG-TS, rtp://@group:port for MPEG-TS over RTP.
+func (s *Stream) playURL() string {
+	scheme := ""
+	switch d := s.dec.(type) {
+	case *tsDec:
+		scheme = "udp"
+	case *rtpDec:
+		if d.ts != nil {
+			scheme = "rtp"
+		}
+	}
+	if scheme == "" || s.key.Port == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%s://@%s", scheme, netip.AddrPortFrom(s.key.Dst, s.key.Port))
 }

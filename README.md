@@ -113,6 +113,16 @@ hour, and what the protocol says.
   and the addresses being resolved.
 - **Anything unrecognised:** the first bytes of the payload.
 
+### Watching a stream
+
+For MPEG-TS streams (marked ▶ in the table), the detail panel has **Open in
+VLC**, which starts VLC on this computer playing the stream; double-clicking
+the row does the same. **Playlist .m3u** saves a playlist file any player
+opens, and **Copy URL** copies the address (`udp://@239.10.1.1:5000`, or
+`rtp://@…` for RTP) to paste into a player. VLC joins the group itself, on the
+interface the operating system picks for multicast, which is normally the one
+with the default route.
+
 IPv6 streams are on their own tab, so the table you care about is not buried
 under neighbour discovery.
 

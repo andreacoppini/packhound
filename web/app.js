@@ -222,6 +222,20 @@ function wire() {
       poll();
     };
   }
+  $("pane-detail").onclick = (e) => {
+    const v = e.target.closest("[data-vlc]");
+    if (v) openVLC(v.dataset.vlc);
+    const c = e.target.closest("[data-copy]");
+    if (c) {
+      navigator.clipboard.writeText(c.dataset.copy).then(() => toast("Copied " + c.dataset.copy, true), () => toast("Could not copy; select the URL and copy it by hand"));
+    }
+  };
+  // Double-clicking a playable stream opens it in VLC.
+  $("rows").ondblclick = (e) => {
+    const tr = e.target.closest("tr[data-key]");
+    const r = tr && ui.last && ui.last.snap.rows.find((x) => x.key === tr.dataset.key);
+    if (r && r.playURL) openVLC(r.key);
+  };
   $("rows").onclick = (e) => {
     const tr = e.target.closest("tr[data-key]");
     if (!tr) return;
@@ -231,6 +245,15 @@ function wire() {
     const g = e.target.closest("[data-key]");
     if (g) select(g.dataset.key, true);
   };
+}
+
+async function openVLC(key) {
+  try {
+    const r = await api("/api/vlc", { key });
+    toast("Opening " + r.url + " in VLC", true);
+  } catch (e) {
+    toast(e.message);
+  }
 }
 
 function select(key, toDetail) {
@@ -400,7 +423,7 @@ function rowHTML(r) {
   const jit = r.jitterMs >= 0 ? r.jitterMs.toFixed(2) + " ms" : "-";
   const title = r.reason ? ` title="${esc(r.reason)}"` : "";
   return `<tr data-key="${esc(r.key)}"${r.key === ui.sel ? ' class="sel"' : ""}>
-<td class="m">${esc(r.group)}</td>
+<td class="m">${esc(r.group)}${r.playURL ? ' <span class="playable" title="Double-click to open in VLC">▶</span>' : ""}</td>
 <td><span class="badge k-${r.kind}">${esc(r.type)}</span></td>
 <td class="name" title="${esc(r.name)}">${esc(r.name)}</td>
 <td class="m">${esc(r.sender)}</td>
@@ -451,6 +474,7 @@ function renderDrawer() {
     const kv = (d.kv || []).map((x) => `<dt>${esc(x.k)}</dt><dd>${esc(x.v)}</dd>`).join("");
     p.innerHTML = `<div class="detail">
 <div class="facts"><div class="dhead"><span class="g">${esc(d.group)}</span><span class="badge k-${d.kind}">${esc(d.type)}</span><span class="st st-${d.statusLevel}">${esc(d.status)}</span></div>
+${d.playURL ? `<div class="play"><button class="small primary" data-vlc="${esc(d.key)}" title="Start VLC on this computer playing ${esc(d.playURL)}">Open in VLC</button><a class="small" href="/api/playlist?key=${encodeURIComponent(d.key)}" title="A playlist file any player opens">Playlist .m3u</a><button class="small" data-copy="${esc(d.playURL)}" title="Copy the URL, to paste into a player">Copy URL</button><span class="m url">${esc(d.playURL)}</span></div>` : ""}
 <div class="dname">${esc(d.name)}</div><dl class="kv">${kv}</dl></div>
 <div class="graph">${chartHTML(d)}</div>
 <div class="tables">${(d.tables || []).map(tableHTML).join("")}</div></div>`;
