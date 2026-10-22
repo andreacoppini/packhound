@@ -53,7 +53,9 @@ func OpenJoin(ifc Interface, gs []groups.Group) (*Joined, error) {
 		return nil, err
 	}
 	j := &Joined{ch: make(chan *joinPkt, 8192), closed: make(chan struct{})}
-	j.pool.New = func() any { return &joinPkt{buf: make([]byte, 65536)} }
+	// Queued datagrams hold only their own bytes: a full queue of IPTV
+	// datagrams is about 11 MB, where 64 KB buffers would be half a gigabyte.
+	j.pool.New = func() any { return &joinPkt{buf: make([]byte, 0, 2048)} }
 	for _, g := range gs {
 		c, err := joinOne(ni, g)
 		if err != nil {
@@ -128,6 +130,7 @@ func joinOne(ni *net.Interface, g groups.Group) (joined, error) {
 func (j *Joined) read(c joined, g groups.Group) {
 	defer j.wg.Done()
 	p4, p6 := c.p4, c.p6
+	rbuf := make([]byte, 65536) // room for any datagram; copied out at its size
 	for {
 		jp := j.pool.Get().(*joinPkt)
 		var n int
@@ -136,7 +139,7 @@ func (j *Joined) read(c joined, g groups.Group) {
 		dst := g.Addr
 		if p4 != nil {
 			var cm *ipv4.ControlMessage
-			n, cm, src, err = p4.ReadFrom(jp.buf)
+			n, cm, src, err = p4.ReadFrom(rbuf)
 			if cm != nil && cm.Dst != nil {
 				if a, ok := netip.AddrFromSlice(cm.Dst.To4()); ok && a.IsMulticast() {
 					dst = a
@@ -144,7 +147,7 @@ func (j *Joined) read(c joined, g groups.Group) {
 			}
 		} else {
 			var cm *ipv6.ControlMessage
-			n, cm, src, err = p6.ReadFrom(jp.buf)
+			n, cm, src, err = p6.ReadFrom(rbuf)
 			if cm != nil && cm.Dst != nil {
 				if a, ok := netip.AddrFromSlice(cm.Dst); ok && a.IsMulticast() {
 					dst = a
@@ -178,9 +181,10 @@ func (j *Joined) read(c joined, g groups.Group) {
 		if dst.Is6() {
 			over = 48
 		}
+		jp.buf = append(jp.buf[:0], rbuf[:n]...)
 		jp.p = pkt.Packet{
 			Time: time.Now(), Src: sa.Addr().Unmap(), Dst: dst, Proto: pkt.ProtoUDP,
-			SrcPort: sa.Port(), DstPort: g.Port, IPLen: n + over, Payload: jp.buf[:n],
+			SrcPort: sa.Port(), DstPort: g.Port, IPLen: n + over, Payload: jp.buf,
 		}
 		select {
 		case j.ch <- jp:
