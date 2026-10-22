@@ -1,0 +1,20 @@
+[Unit]
+Description=Packhound console on tty1
+After=systemd-user-sessions.service packhound-firstboot.service
+Conflicts=getty@tty1.service
+
+[Service]
+ExecStart=/usr/local/bin/packhound tty
+StandardInput=tty
+StandardOutput=tty
+StandardError=journal
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+TTYVTDisallocate=yes
+Restart=always
+RestartSec=1
+Environment=TERM=linux
+
+[Install]
+WantedBy=multi-user.target

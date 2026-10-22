@@ -56,6 +56,10 @@ function toast(msg, ok) {
 async function api(path, body) {
   const opt = body === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) };
   const r = await fetch(path, opt);
+  if (r.status === 401) {
+    window.location.href = "/login.html";
+    throw new Error("Logged out");
+  }
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(j.error || r.statusText);
   return j;
@@ -82,6 +86,19 @@ async function init() {
     $("liveWhy").hidden = false;
   }
   ui.common = info.common;
+  // The background service: who is logged in, and the settings dialog.
+  ui.server = info.server;
+  if (info.server) {
+    $("who").textContent = info.server.user + "@" + info.server.hostname;
+    $("who").hidden = false;
+    $("settingsBtn").hidden = false;
+    $("logout").hidden = false;
+    $("settingsBtn").onclick = () => window.openSettings && window.openSettings();
+    const h = document.createElement("div");
+    h.className = "hint";
+    h.textContent = "The service keeps listening with these settings, and resumes them after a restart.";
+    $("liveWhy").after(h);
+  }
 
   const cfg = Object.assign({}, info.config, store.get("config", {}));
   $("silentAfter").value = cfg.silentAfter;
@@ -234,7 +251,7 @@ function wire() {
   $("rows").ondblclick = (e) => {
     const tr = e.target.closest("tr[data-key]");
     const r = tr && ui.last && ui.last.snap.rows.find((x) => x.key === tr.dataset.key);
-    if (r && r.playURL) openVLC(r.key);
+    if (r && r.playURL && !ui.server) openVLC(r.key);
   };
   $("rows").onclick = (e) => {
     const tr = e.target.closest("tr[data-key]");
@@ -423,7 +440,7 @@ function rowHTML(r) {
   const jit = r.jitterMs >= 0 ? r.jitterMs.toFixed(2) + " ms" : "-";
   const title = r.reason ? ` title="${esc(r.reason)}"` : "";
   return `<tr data-key="${esc(r.key)}"${r.key === ui.sel ? ' class="sel"' : ""}>
-<td class="m">${esc(r.group)}${r.playURL ? ' <span class="playable" title="Double-click to open in VLC">▶</span>' : ""}</td>
+<td class="m">${esc(r.group)}${r.playURL && !ui.server ? ' <span class="playable" title="Double-click to open in VLC">▶</span>' : ""}</td>
 <td><span class="badge k-${r.kind}">${esc(r.type)}</span></td>
 <td class="name" title="${esc(r.name)}">${esc(r.name)}</td>
 <td class="m">${esc(r.sender)}</td>
@@ -474,7 +491,7 @@ function renderDrawer() {
     const kv = (d.kv || []).map((x) => `<dt>${esc(x.k)}</dt><dd>${esc(x.v)}</dd>`).join("");
     p.innerHTML = `<div class="detail">
 <div class="facts"><div class="dhead"><span class="g">${esc(d.group)}</span><span class="badge k-${d.kind}">${esc(d.type)}</span><span class="st st-${d.statusLevel}">${esc(d.status)}</span></div>
-${d.playURL ? `<div class="play"><button class="small primary" data-vlc="${esc(d.key)}" title="Start VLC on this computer playing ${esc(d.playURL)}">Open in VLC</button><a class="small" href="/api/playlist?key=${encodeURIComponent(d.key)}" title="A playlist file any player opens">Playlist .m3u</a><button class="small" data-copy="${esc(d.playURL)}" title="Copy the URL, to paste into a player">Copy URL</button><span class="m url">${esc(d.playURL)}</span></div>` : ""}
+${d.playURL ? `<div class="play">${ui.server ? "" : `<button class="small primary" data-vlc="${esc(d.key)}" title="Start VLC on this computer playing ${esc(d.playURL)}">Open in VLC</button>`}<a class="small" href="/api/playlist?key=${encodeURIComponent(d.key)}" title="A playlist file any player opens">Playlist .m3u</a><button class="small" data-copy="${esc(d.playURL)}" title="Copy the URL, to paste into a player">Copy URL</button><span class="m url">${esc(d.playURL)}</span></div>` : ""}
 <div class="dname">${esc(d.name)}</div><dl class="kv">${kv}</dl></div>
 <div class="graph">${chartHTML(d)}</div>
 <div class="tables">${(d.tables || []).map(tableHTML).join("")}</div></div>`;

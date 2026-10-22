@@ -19,6 +19,7 @@ Get the file for your platform from the
 | Windows | `packhound-windows-amd64.exe` (`-arm64` for Surface and Snapdragon), or the `.zip` of the same file for networks that block `.exe` downloads |
 | macOS | `packhound-macos.zip`, one universal binary for Intel and Apple Silicon |
 | Linux | `packhound-linux-amd64.tar.gz` (or `-arm64`) |
+| Virtual appliance | `packhound-appliance-<version>.ova` (VMware, VirtualBox), `.qcow2` (Proxmox, KVM) or `-hyperv.zip` (Hyper-V): see [The appliance](#the-appliance) |
 
 The binaries are unsigned, so Windows and macOS warn on first launch. On macOS
 run `xattr -d com.apple.quarantine packhound-macos-universal` once, or
@@ -163,6 +164,128 @@ if so. It never delays anything, says nothing when it fails, and caches the
 answer for a day. `-no-update-check` or `PACKHOUND_NO_UPDATE_CHECK=1` turns it
 off.
 
+## The appliance
+
+For monitoring around the clock, Packhound comes as a virtual machine: a
+minimal Debian 13 that runs Packhound as a service, with the console behind a
+login over HTTPS, a REST API and an SNMP agent for network management
+systems.
+
+### Deploying it
+
+| Hypervisor | File | How |
+|---|---|---|
+| VMware ESXi, Workstation, Fusion | `.ova` | Deploy OVF Template, or File > Open |
+| VirtualBox | `.ova` | File > Import Appliance |
+| Proxmox VE | `.qcow2` | create a VM with no disk, then `qm importdisk <vmid> packhound-appliance-<version>.qcow2 <storage>` and attach it |
+| KVM / libvirt | `.qcow2` | `virt-install --import --disk packhound-appliance-<version>.qcow2 --osinfo debian13 ...` |
+| Hyper-V | `-hyperv.zip` | unzip, then a **Generation 1** VM using the `.vhdx` |
+
+It needs 2 CPUs and 2 GB of memory (the OVA sets that), and boots from BIOS.
+The disk is 8 GB and grows to fill a larger one on first boot.
+
+Give it a **second network adapter** on what you want to watch (the IPTV VLAN,
+or a port mirroring the IPTV traffic) and keep the first for management. On
+VMware, a port group that should see all the multicast on a VLAN needs
+*Promiscuous mode: Accept* in its security settings; on Proxmox and KVM the
+bridge does this already.
+
+### Setting it up
+
+Open the VM's console after it boots. A short setup asks for:
+
+1. the management interface, and the one to monitor (when there are two)
+2. DHCP, or a static address, gateway and DNS
+3. a host name
+4. a login name and password
+
+That is all it asks. It then shows the address of the web console
+(`https://<address>/`). Log in with the same name and password, and do the rest
+in the browser: which groups to join, alert thresholds, SNMP, the API, more
+network settings, time, SSH. The browser warns about the certificate, which is
+made on the appliance itself; to be rid of the warning, replace
+`/var/lib/packhound/tls.crt` and `tls.key` with a certificate from your own CA.
+
+Whatever you start in the console keeps running: the service saves what it
+was told to listen to and resumes it after a restart or a reboot.
+
+Afterwards the VM console shows the appliance's address, what it is listening
+to and how many streams are healthy, and a menu for network settings, the
+password, a shell, reboot and a factory reset. Each needs the password. The
+same login works for SSH once SSH is turned on (Settings > System).
+
+Setup can also run without questions, for automated deployments:
+
+```
+packhound setup -iface eth0 -address 10.0.0.50/24 -gateway 10.0.0.1 -dns 10.0.0.1 \
+  -hostname iptv-mon-1 -user admin -password-file /root/pw -listen eth1
+```
+
+### SNMP
+
+The agent answers SNMP v1 and v2c, read-only, on UDP 161 with the community
+`public` until you change it (Settings > SNMP, where you can also limit which
+managers may ask). Load [`PACKHOUND-MIB.txt`](web/PACKHOUND-MIB.txt) into your
+manager; the console offers it for download too.
+
+The tree is under `1.3.6.1.4.1.8072.9999.9999.7` (net-snmp's arc for private
+MIBs; it can be moved under your own enterprise number). Each stream is a row
+indexed by its address and port, so any stream's OID can be written down
+without walking the table: 239.192.1.1:1234 is `1.4.239.192.1.1.1234` (IPv4,
+4 octets, the address, the port).
+
+| OID under the base | |
+|---|---|
+| `.1.2.0` | streams seen |
+| `.1.4.0`, `.1.5.0` | streams degraded, lost now |
+| `.1.7.0` | total rate, kbit/s |
+| `.2.1.3.<index>` | the stream's name (channel name for IPTV) |
+| `.2.1.7.<index>` | status: 1 receiving, 2 degraded, 3 lost, 4 periodic, 5 quiet |
+| `.2.1.10.<index>` | rate, kbit/s (`.9`: bit/s) |
+| `.2.1.11.<index>` | packets/s |
+| `.2.1.13.<index>` | jitter, microseconds |
+| `.2.1.14.<index>` | errors lost on the way, last minute |
+| `.2.1.15.<index>` | errors made by the sender, last minute |
+| `.2.1.17`, `.18` | packets and bytes received (Counter64) |
+
+**The Dude:** add the appliance as a device, then for each channel a probe of
+type SNMP, *Oid* set to the status
+(`1.3.6.1.4.1.8072.9999.9999.7.2.1.7.1.4.239.192.1.1.1234`), *Compare*
+*equals* `1`: the probe goes down when the channel stops or degrades. A
+function `oid("…2.1.10.1.4.239.192.1.1.1234")` on the device charts its rate.
+
+### REST API
+
+Read-only JSON over HTTPS. Send the API token (Settings > REST API) as
+`Authorization: Bearer <token>`, as an `X-API-Key` header, or as `?token=` for
+tools that cannot set headers.
+
+```
+GET /api/v1/summary                      counts and totals
+GET /api/v1/streams                      every stream; filter with ?kind=video, ?status=Degraded, ?family=4
+GET /api/v1/streams/239.192.1.1:1234     one stream, with its PIDs, services and senders
+GET /api/v1/alerts?since=2026-10-22T08:00:00Z
+GET /metrics                             the same numbers for Prometheus
+```
+
+Each stream has `group`, `name`, `kind`, `type`, `sender`, `status` (and
+`statusCode`, as in SNMP), `bitRate` (bit/s), `packetRate`, `avgSize`,
+`jitterMs`, `errorsLastMinute`, `senderErrorsLastMinute`, `packets`, `bytes`,
+`lastSeen` and `snmpIndex`. Field names are kept stable: new ones are added,
+existing ones are never renamed.
+
+### Building the image
+
+`appliance/build.sh` builds it on any Debian or Ubuntu machine with
+`mmdebstrap`, `debian-archive-keyring`, `qemu-utils` and `parted`, as root:
+
+```
+CGO_ENABLED=0 GOOS=linux go build -o packhound-linux-amd64 .
+sudo appliance/build.sh packhound-linux-amd64 1.0.0 out/
+```
+
+Releases build it in GitHub Actions. It takes about three minutes.
+
 ## How it works
 
 Capture uses no C code on any platform: an AF_PACKET socket on Linux, a BPF
@@ -179,7 +302,10 @@ The packages:
 | `internal/monitor` | streams, rates, health, alerts, and a decoder per protocol |
 | `internal/mpegts` | transport stream analysis: PSI tables, continuity, H.264 picture size |
 | `internal/demo` | the demo traffic, built from real frames |
+| `internal/snmp` | the SNMP agent: v1 and v2c, Get, GetNext, GetBulk |
+| `internal/appliance` | the appliance host: network (systemd-networkd), name, logins, SSH, time |
 | `web/` | the console, embedded in the binary |
+| `appliance/` | the image build, and the appliance's systemd units |
 
 Live capture has been tested on Linux. The macOS and Windows capture code builds
 and is checked on every push, but has not yet been run against real hardware;
@@ -193,6 +319,9 @@ What's new in 1.0.0 (2026-10-22):
 *) First release: live multicast monitor for IPTV, audio, discovery,
    timing and routing protocols, IPv4 and IPv6, with alerts, pcap
    recording, CSV/JSON export and a demo mode.
+*) Virtual appliance (OVA, qcow2, VHDX) running Packhound as a service:
+   console setup, web console behind a login over HTTPS, REST API,
+   Prometheus metrics and an SNMP v1/v2c agent with its MIB.
 ```
 
 ## Licence

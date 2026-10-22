@@ -76,6 +76,10 @@ func (c *console) handleVLC(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	if c.svc != nil {
+		writeErr(w, errors.New("VLC cannot open on the server itself: use Playlist .m3u or Copy URL on your own computer"))
+		return
+	}
 	url, name, err := c.streamURL(req.Key)
 	if err != nil {
 		writeErr(w, err)

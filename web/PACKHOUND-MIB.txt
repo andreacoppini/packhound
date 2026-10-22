@@ -1,0 +1,389 @@
+PACKHOUND-MIB DEFINITIONS ::= BEGIN
+
+--
+-- Packhound multicast monitor: streams seen, their rates and health.
+--
+-- The tree lives under net-snmp's playpen arc, which exists for private
+-- MIBs on sites without an enterprise number. Packhound can move it under
+-- another base OID (Settings > SNMP); edit the packhoundMIB assignment
+-- below to match if you do.
+--
+
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, Integer32, Gauge32, Counter64
+        FROM SNMPv2-SMI
+    TEXTUAL-CONVENTION, DisplayString
+        FROM SNMPv2-TC
+    MODULE-COMPLIANCE, OBJECT-GROUP
+        FROM SNMPv2-CONF
+    InetAddressType, InetAddress
+        FROM INET-ADDRESS-MIB
+    netSnmpPlaypen
+        FROM NET-SNMP-MIB;
+
+packhoundMIB MODULE-IDENTITY
+    LAST-UPDATED "202610220000Z"
+    ORGANIZATION "Packhound"
+    CONTACT-INFO "https://github.com/andreacoppini/packhound"
+    DESCRIPTION
+        "Multicast streams seen by a Packhound monitor: IPTV, audio,
+        discovery, timing and routing traffic, with each stream's rate,
+        packet rate, jitter, errors and status."
+    REVISION "202610220000Z"
+    DESCRIPTION "First version."
+    ::= { netSnmpPlaypen 7 }
+
+phGlobals      OBJECT IDENTIFIER ::= { packhoundMIB 1 }
+phStreamTable  OBJECT-TYPE
+    SYNTAX      SEQUENCE OF PhStreamEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "One row per multicast stream: a group and UDP port, or a
+                group and IP protocol for traffic that is not UDP."
+    ::= { packhoundMIB 2 }
+phConformance  OBJECT IDENTIFIER ::= { packhoundMIB 3 }
+
+PhStreamState ::= TEXTUAL-CONVENTION
+    STATUS      current
+    DESCRIPTION
+        "receiving: a video or audio stream arriving normally.
+        degraded: losing packets, or well below its usual rate.
+        lost: a video or audio stream that has stopped.
+        periodic: discovery or control traffic, which speaks when it has
+        something to say and is never alarmed.
+        quiet: periodic traffic silent for five minutes."
+    SYNTAX      INTEGER { receiving(1), degraded(2), lost(3), periodic(4), quiet(5) }
+
+-- ---- globals ----
+
+phVersion OBJECT-TYPE
+    SYNTAX      DisplayString
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Packhound version."
+    ::= { phGlobals 1 }
+
+phStreams OBJECT-TYPE
+    SYNTAX      Gauge32
+    UNITS       "streams"
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Streams seen since listening started."
+    ::= { phGlobals 2 }
+
+phStreamsReceiving OBJECT-TYPE
+    SYNTAX      Gauge32
+    UNITS       "streams"
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Video and audio streams receiving normally."
+    ::= { phGlobals 3 }
+
+phStreamsDegraded OBJECT-TYPE
+    SYNTAX      Gauge32
+    UNITS       "streams"
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Streams degraded now."
+    ::= { phGlobals 4 }
+
+phStreamsLost OBJECT-TYPE
+    SYNTAX      Gauge32
+    UNITS       "streams"
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Video and audio streams that have stopped."
+    ::= { phGlobals 5 }
+
+phTotalBitRate OBJECT-TYPE
+    SYNTAX      Gauge32
+    UNITS       "bits per second"
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Total multicast rate at the IP layer. Saturates at its
+                maximum; use phTotalKbps above 4 Gb/s."
+    ::= { phGlobals 6 }
+
+phTotalKbps OBJECT-TYPE
+    SYNTAX      Gauge32
+    UNITS       "kilobits per second"
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Total multicast rate at the IP layer."
+    ::= { phGlobals 7 }
+
+phTotalPacketRate OBJECT-TYPE
+    SYNTAX      Gauge32
+    UNITS       "packets per second"
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Total multicast packets per second."
+    ::= { phGlobals 8 }
+
+phListening OBJECT-TYPE
+    SYNTAX      INTEGER { true(1), false(2) }
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Whether Packhound is listening."
+    ::= { phGlobals 9 }
+
+phLocalDropsLastMinute OBJECT-TYPE
+    SYNTAX      Gauge32
+    UNITS       "packets"
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Packets this machine dropped in the last minute before it
+                could read them. While this is above zero, errors on
+                streams may be on this machine rather than the network."
+    ::= { phGlobals 10 }
+
+phMediaStreams OBJECT-TYPE
+    SYNTAX      Gauge32
+    UNITS       "streams"
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Video and audio streams seen."
+    ::= { phGlobals 11 }
+
+-- ---- the stream table ----
+
+phStreamEntry OBJECT-TYPE
+    SYNTAX      PhStreamEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION
+        "A stream. The index is the group's address type, its length and
+        its octets, then the UDP port: 239.192.1.1:1234 is
+        1.4.239.192.1.1.1234. Traffic that is not UDP has 65536 plus its IP
+        protocol number in place of the port (IGMP: 65538)."
+    INDEX { phStreamAddrType, phStreamAddr, phStreamPort }
+    ::= { phStreamTable 1 }
+
+PhStreamEntry ::= SEQUENCE {
+    phStreamAddrType          InetAddressType,
+    phStreamGroup             DisplayString,
+    phStreamName              DisplayString,
+    phStreamType              DisplayString,
+    phStreamKind              DisplayString,
+    phStreamSender            DisplayString,
+    phStreamStatus            PhStreamState,
+    phStreamStatusText        DisplayString,
+    phStreamBitRate           Gauge32,
+    phStreamKbps              Gauge32,
+    phStreamPacketRate        Gauge32,
+    phStreamAvgSize           Gauge32,
+    phStreamJitter            Gauge32,
+    phStreamErrorsLastMinute  Gauge32,
+    phStreamSenderErrorsLastMinute Gauge32,
+    phStreamSenders           Gauge32,
+    phStreamPackets           Counter64,
+    phStreamOctets            Counter64,
+    phStreamLastSeen          Gauge32,
+    phStreamProblem           DisplayString,
+    phStreamAddr              InetAddress,
+    phStreamPort              Integer32
+}
+
+phStreamAddrType OBJECT-TYPE
+    SYNTAX      InetAddressType
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "ipv4(1) or ipv6(2)."
+    ::= { phStreamEntry 1 }
+
+phStreamAddr OBJECT-TYPE
+    SYNTAX      InetAddress (SIZE (4 | 16))
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "The multicast group."
+    ::= { phStreamEntry 101 }
+
+phStreamPort OBJECT-TYPE
+    SYNTAX      Integer32 (0..65791)
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "The UDP port, or 65536 plus the IP protocol number for
+                traffic that is not UDP."
+    ::= { phStreamEntry 102 }
+
+phStreamGroup OBJECT-TYPE
+    SYNTAX      DisplayString
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "The group as text, e.g. 239.192.1.1:1234."
+    ::= { phStreamEntry 2 }
+
+phStreamName OBJECT-TYPE
+    SYNTAX      DisplayString
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "The channel name from the stream's SDT, an AES67 session
+                name from SAP, or a summary such as '8 services, 6 types'."
+    ::= { phStreamEntry 3 }
+
+phStreamType OBJECT-TYPE
+    SYNTAX      DisplayString
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "What the traffic is, e.g. 'MPEG-TS / UDP', 'mDNS'."
+    ::= { phStreamEntry 4 }
+
+phStreamKind OBJECT-TYPE
+    SYNTAX      DisplayString
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "video, audio, disc (discovery), time, net (network
+                control) or unk (unknown)."
+    ::= { phStreamEntry 5 }
+
+phStreamSender OBJECT-TYPE
+    SYNTAX      DisplayString
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "The sender's address, or 'N senders'."
+    ::= { phStreamEntry 6 }
+
+phStreamStatus OBJECT-TYPE
+    SYNTAX      PhStreamState
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "The stream's status."
+    ::= { phStreamEntry 7 }
+
+phStreamStatusText OBJECT-TYPE
+    SYNTAX      DisplayString
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "The status as a word."
+    ::= { phStreamEntry 8 }
+
+phStreamBitRate OBJECT-TYPE
+    SYNTAX      Gauge32
+    UNITS       "bits per second"
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Rate at the IP layer, averaged as the console is set to."
+    ::= { phStreamEntry 9 }
+
+phStreamKbps OBJECT-TYPE
+    SYNTAX      Gauge32
+    UNITS       "kilobits per second"
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Rate at the IP layer."
+    ::= { phStreamEntry 10 }
+
+phStreamPacketRate OBJECT-TYPE
+    SYNTAX      Gauge32
+    UNITS       "packets per second"
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Packets per second, rounded."
+    ::= { phStreamEntry 11 }
+
+phStreamAvgSize OBJECT-TYPE
+    SYNTAX      Gauge32
+    UNITS       "bytes"
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Average IP datagram size."
+    ::= { phStreamEntry 12 }
+
+phStreamJitter OBJECT-TYPE
+    SYNTAX      Gauge32
+    UNITS       "microseconds"
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Variation in packet arrival times, for video and audio;
+                0 for other streams."
+    ::= { phStreamEntry 13 }
+
+phStreamErrorsLastMinute OBJECT-TYPE
+    SYNTAX      Gauge32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Errors that mean packets were lost on the way, in the last
+                minute: MPEG-TS continuity errors and RTP sequence gaps,
+                plus duplicated datagrams."
+    ::= { phStreamEntry 14 }
+
+phStreamSenderErrorsLastMinute OBJECT-TYPE
+    SYNTAX      Gauge32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "MPEG-TS continuity errors the sender made, in the last
+                minute: in the stream as sent, with nothing lost on the
+                network."
+    ::= { phStreamEntry 15 }
+
+phStreamSenders OBJECT-TYPE
+    SYNTAX      Gauge32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Number of senders seen."
+    ::= { phStreamEntry 16 }
+
+phStreamPackets OBJECT-TYPE
+    SYNTAX      Counter64
+    UNITS       "packets"
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Packets received since listening started."
+    ::= { phStreamEntry 17 }
+
+phStreamOctets OBJECT-TYPE
+    SYNTAX      Counter64
+    UNITS       "bytes"
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Bytes received at the IP layer since listening started."
+    ::= { phStreamEntry 18 }
+
+phStreamLastSeen OBJECT-TYPE
+    SYNTAX      Gauge32
+    UNITS       "seconds"
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Seconds since the last packet."
+    ::= { phStreamEntry 19 }
+
+phStreamProblem OBJECT-TYPE
+    SYNTAX      DisplayString
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Why the stream is degraded or lost; empty otherwise."
+    ::= { phStreamEntry 20 }
+
+-- ---- conformance ----
+
+phCompliances OBJECT IDENTIFIER ::= { phConformance 1 }
+phGroups      OBJECT IDENTIFIER ::= { phConformance 2 }
+
+phCompliance MODULE-COMPLIANCE
+    STATUS      current
+    DESCRIPTION "Everything Packhound answers."
+    MODULE
+        MANDATORY-GROUPS { phGlobalGroup, phStreamGroupObjects }
+    ::= { phCompliances 1 }
+
+phGlobalGroup OBJECT-GROUP
+    OBJECTS { phVersion, phStreams, phStreamsReceiving, phStreamsDegraded,
+              phStreamsLost, phTotalBitRate, phTotalKbps, phTotalPacketRate,
+              phListening, phLocalDropsLastMinute, phMediaStreams }
+    STATUS      current
+    DESCRIPTION "Totals."
+    ::= { phGroups 1 }
+
+phStreamGroupObjects OBJECT-GROUP
+    OBJECTS { phStreamGroup, phStreamName, phStreamType, phStreamKind,
+              phStreamSender, phStreamStatus, phStreamStatusText,
+              phStreamBitRate, phStreamKbps, phStreamPacketRate,
+              phStreamAvgSize, phStreamJitter, phStreamErrorsLastMinute,
+              phStreamSenderErrorsLastMinute, phStreamSenders,
+              phStreamPackets, phStreamOctets, phStreamLastSeen,
+              phStreamProblem }
+    STATUS      current
+    DESCRIPTION "Per stream."
+    ::= { phGroups 2 }
+
+END

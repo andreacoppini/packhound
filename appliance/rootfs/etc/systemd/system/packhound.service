@@ -1,0 +1,21 @@
+[Unit]
+Description=Packhound multicast monitor
+Documentation=https://github.com/andreacoppini/packhound
+After=network.target systemd-networkd.service
+Wants=network.target
+
+[Service]
+ExecStart=/usr/local/bin/packhound server -config /etc/packhound/config.json -state /var/lib/packhound
+Restart=always
+RestartSec=2
+# Root: the service also manages the host (addresses, name, logins) for the
+# web console. What runs is memory-safe Go, and the hardening below keeps it
+# away from what it has no business touching.
+PrivateTmp=yes
+ProtectHome=read-only
+ProtectKernelModules=yes
+ProtectKernelTunables=no
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

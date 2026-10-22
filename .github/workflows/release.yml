@@ -65,6 +65,22 @@ jobs:
           dist/packhound-darwin-arm64
           dist/packhound-macos-universal
 
+      # The virtual appliance: Debian with Packhound as a service, as an OVA
+      # (VMware, VirtualBox), a qcow2 (Proxmox, KVM) and a VHDX (Hyper-V).
+      - name: Build the virtual appliance
+        run: |
+          set -euo pipefail
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          VERSION="${TAG#v}"
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq mmdebstrap debian-archive-keyring qemu-utils parted e2fsprogs
+          sudo appliance/build.sh dist/packhound-linux-amd64 "$VERSION" appliance-out
+          sudo chown -R "$(id -u)" appliance-out
+          mv "appliance-out/packhound-$VERSION.ova" "dist/packhound-appliance-$VERSION.ova"
+          mv "appliance-out/packhound-$VERSION.qcow2" "dist/packhound-appliance-$VERSION.qcow2"
+          # A VHDX does not compress itself; zip it for the download.
+          (cd appliance-out && zip -q "../dist/packhound-appliance-$VERSION-hyperv.zip" "packhound-$VERSION.vhdx")
+
       - name: Package
         run: |
           set -euo pipefail

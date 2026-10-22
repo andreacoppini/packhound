@@ -32,6 +32,8 @@ type Row struct {
 	// Continuity errors in the last minute that the sender made: in the
 	// stream as sent, nothing lost on the network.
 	SourceErrors uint64 `json:"sourceErrors,omitempty"`
+	// ErrorsLastMinute is the number behind Errors: loss in the last minute.
+	ErrorsLastMinute uint64 `json:"errorsLastMinute"`
 	// PlayURL opens the stream in a player such as VLC, for streams one can
 	// play: MPEG-TS over UDP or RTP.
 	PlayURL     string    `json:"playURL,omitempty"`
@@ -189,6 +191,7 @@ func (s *Stream) row() Row {
 	if s.dec != nil {
 		if errs, label := s.dec.errorsLastMinute(); label != "" {
 			r.Errors = "0"
+			r.ErrorsLastMinute = errs
 			if errs > 0 {
 				r.Errors = fmt.Sprintf("%d /min", errs)
 				r.ErrLevel = "err"

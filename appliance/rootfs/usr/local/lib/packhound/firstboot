@@ -1,0 +1,15 @@
+#!/bin/sh
+# Runs once, on the first boot of each deployed copy.
+set -u
+# Every copy gets its own SSH host keys.
+rm -f /etc/ssh/ssh_host_*
+ssh-keygen -A
+# Grow the root partition and file system if the VM's disk was made larger.
+root=$(findmnt -no SOURCE /)
+disk=/dev/$(lsblk -no PKNAME "$root" | head -1)
+part=$(echo "$root" | grep -o '[0-9]*$')
+if [ -b "$disk" ] && [ -n "$part" ]; then
+	growpart "$disk" "$part" && resize2fs "$root"
+fi
+mkdir -p /var/lib/packhound
+date -u +%FT%TZ > /var/lib/packhound/firstboot.done

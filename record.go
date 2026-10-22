@@ -31,9 +31,16 @@ type recorder struct {
 // busy IPTV feed is tens of gigabytes.
 const recordingLimit = 2 << 30
 
+// recordDirOverride, when set, is where recordings go (the service keeps
+// them in its own state directory).
+var recordDirOverride string
+
 // recordingDir is where recordings go: Downloads if there is one, else the
 // working directory.
 func recordingDir() string {
+	if recordDirOverride != "" {
+		return recordDirOverride
+	}
 	if home, err := os.UserHomeDir(); err == nil {
 		d := filepath.Join(home, "Downloads")
 		if st, err := os.Stat(d); err == nil && st.IsDir() {

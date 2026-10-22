@@ -1,0 +1,11 @@
+# Until setup has run, every Ethernet interface tries DHCP, so a fresh copy
+# can be reached. Setup writes 10-packhound-*.network files, which win.
+[Match]
+Name=eth* en*
+
+[Network]
+DHCP=ipv4
+IPv6AcceptRA=yes
+
+[DHCPv4]
+UseHostname=no

@@ -39,6 +39,10 @@ type console struct {
 	newer     *updateInfo
 	recorded  map[string]string // recording file name -> path, for download
 	checkedUp bool
+
+	// Set when the console is the background service's: changes are saved,
+	// and the page is told what else it may offer.
+	svc *service
 }
 
 func runConsole(opt options) error {
@@ -57,23 +61,10 @@ func runConsole(opt options) error {
 	addr := ln.Addr().String()
 	link := "http://" + addr
 
-	content, err := fs.Sub(webAssets, "web")
-	if err != nil {
+	mux := http.NewServeMux()
+	if err := c.routes(mux); err != nil {
 		return err
 	}
-	mux := http.NewServeMux()
-	mux.Handle("/", http.FileServer(http.FS(content)))
-	mux.HandleFunc("/api/info", c.handleInfo)
-	mux.HandleFunc("/api/start", c.handleStart)
-	mux.HandleFunc("/api/stop", c.handleStop)
-	mux.HandleFunc("/api/clear", c.handleClear)
-	mux.HandleFunc("/api/config", c.handleConfig)
-	mux.HandleFunc("/api/state", c.handleState)
-	mux.HandleFunc("/api/export", c.handleExport)
-	mux.HandleFunc("/api/record", c.handleRecord)
-	mux.HandleFunc("/api/recording", c.handleRecording)
-	mux.HandleFunc("/api/vlc", c.handleVLC)
-	mux.HandleFunc("/api/playlist", c.handlePlaylist)
 
 	fmt.Printf("Packhound %s\nConsole: %s\n(leave this window open; close it or press Ctrl-C to quit)\n", version, link)
 	if ok, why := capture.LiveAvailable(); !ok {
@@ -89,6 +80,27 @@ func runConsole(opt options) error {
 	}
 	srv := &http.Server{Handler: c.guard(addr, mux), ReadHeaderTimeout: 10 * time.Second}
 	return srv.Serve(ln)
+}
+
+// routes registers the page and the console's API on mux.
+func (c *console) routes(mux *http.ServeMux) error {
+	content, err := fs.Sub(webAssets, "web")
+	if err != nil {
+		return err
+	}
+	mux.Handle("/", http.FileServer(http.FS(content)))
+	mux.HandleFunc("/api/info", c.handleInfo)
+	mux.HandleFunc("/api/start", c.handleStart)
+	mux.HandleFunc("/api/stop", c.handleStop)
+	mux.HandleFunc("/api/clear", c.handleClear)
+	mux.HandleFunc("/api/config", c.handleConfig)
+	mux.HandleFunc("/api/state", c.handleState)
+	mux.HandleFunc("/api/export", c.handleExport)
+	mux.HandleFunc("/api/record", c.handleRecord)
+	mux.HandleFunc("/api/recording", c.handleRecording)
+	mux.HandleFunc("/api/vlc", c.handleVLC)
+	mux.HandleFunc("/api/playlist", c.handlePlaylist)
+	return nil
 }
 
 // guard refuses requests that did not come from the console's own page. The
@@ -182,6 +194,7 @@ func (c *console) handleInfo(w http.ResponseWriter, r *http.Request) {
 		"config":     toJSON(c.eng.mon.Config()),
 		"update":     c.pollUpdate(),
 		"recordDir":  recordingDir(),
+		"server":     c.svc.info(r),
 	})
 }
 
@@ -195,6 +208,11 @@ func (c *console) handleStart(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	// The service remembers what it was told to listen to, and resumes it
+	// after a restart.
+	if err := c.svc.saveListen(req, true); err != nil {
+		c.eng.mon.Logf("Could not save the settings: %v", err)
+	}
 	writeJSON(w, c.eng.status())
 }
 
@@ -205,6 +223,9 @@ func (c *console) handleStop(w http.ResponseWriter, r *http.Request) {
 	}
 	c.eng.stop()
 	c.noteRecording()
+	if err := c.svc.saveRunning(false); err != nil {
+		c.eng.mon.Logf("Could not save the settings: %v", err)
+	}
 	writeJSON(w, c.eng.status())
 }
 
@@ -231,6 +252,9 @@ func (c *console) handleConfig(w http.ResponseWriter, r *http.Request) {
 		cfg.SilentAfter = time.Second
 	}
 	c.eng.mon.SetConfig(cfg)
+	if err := c.svc.saveAlerts(toJSON(c.eng.mon.Config())); err != nil {
+		c.eng.mon.Logf("Could not save the settings: %v", err)
+	}
 	writeJSON(w, toJSON(c.eng.mon.Config()))
 }
 

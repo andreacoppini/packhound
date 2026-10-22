@@ -64,6 +64,7 @@ func parseFlags() options {
 		fmt.Fprintf(os.Stderr, "Packhound %s: see the multicast streams arriving at this machine.\n\n", version)
 		fmt.Fprintf(os.Stderr, "With no arguments it opens a console in your browser. Options:\n\n")
 		flag.PrintDefaults()
+		fmt.Fprintf(os.Stderr, "\nAs a background service (the appliance runs this):\n  packhound server [-config /etc/packhound/config.json] [-https :443]\n  packhound setup     first-time setup of the appliance\n  packhound passwd    set a login's password\n")
 		fmt.Fprintf(os.Stderr, "\nExamples:\n  packhound\n  packhound -i eth0 -duration 30s -out streams.csv\n  packhound -i \"Ethernet 2\" -mode join -join 239.10.1.1-40:5000\n  packhound -mode demo\n")
 	}
 	flag.Parse()
@@ -71,6 +72,30 @@ func parseFlags() options {
 }
 
 func main() {
+	// Subcommands for the appliance and the background service.
+	if len(os.Args) > 1 {
+		var err error
+		handled := true
+		switch os.Args[1] {
+		case "server":
+			err = serverMain(os.Args[2:])
+		case "setup":
+			err = runSetup(os.Args[2:])
+		case "tty":
+			err = runTTY(os.Args[2:])
+		case "passwd":
+			err = runPasswd(os.Args[2:])
+		default:
+			handled = false
+		}
+		if handled {
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "error:", err)
+				os.Exit(1)
+			}
+			return
+		}
+	}
 	o := parseFlags()
 	if err := run(o); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
@@ -201,4 +226,16 @@ func writeJSONFile(w io.Writer, snap monitor.Snapshot) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(map[string]any{"exported": time.Now(), "rows": snap.Rows, "alerts": snap.Alerts})
+}
+
+func serverMain(args []string) error {
+	fs := flag.NewFlagSet("server", flag.ExitOnError)
+	var o serverOptions
+	fs.StringVar(&o.config, "config", defaultConfigPath, "configuration file")
+	fs.StringVar(&o.state, "state", defaultStateDir, "state directory: TLS certificate and recordings")
+	fs.StringVar(&o.https, "https", ":443", "address for the console, API and metrics, over HTTPS")
+	fs.StringVar(&o.http, "http", ":80", "address that redirects plain HTTP to HTTPS (empty: none)")
+	fs.StringVar(&o.snmpAddr, "snmp", "", "address for the SNMP agent (default: the configured port)")
+	fs.Parse(args)
+	return runServer(o)
 }

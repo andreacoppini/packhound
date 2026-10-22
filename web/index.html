@@ -22,6 +22,9 @@
     <div class="counter"><b id="cPps">0</b><i>packets/s</i></div>
     <div class="counter err"><b id="cProblems">0</b><i>problems</i></div>
   </div>
+  <span class="who" id="who" hidden></span>
+  <button id="settingsBtn" hidden>Settings</button>
+  <a id="logout" href="/auth/logout" hidden><button type="button">Log out</button></a>
   <button id="expCsv" title="Download the stream table as CSV">CSV</button>
   <button id="expJson" title="Download the stream table and alerts as JSON">JSON</button>
 </header>
@@ -120,6 +123,8 @@
 </div>
 
 <div class="toast" id="toast" hidden></div>
+<div class="modal" id="settings" hidden></div>
 <script src="app.js"></script>
+<script src="settings.js"></script>
 </body>
 </html>

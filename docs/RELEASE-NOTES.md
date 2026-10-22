@@ -11,3 +11,11 @@ First release of Packhound: see the multicast streams arriving at a network port
 - **Demo mode** to try the console with no network.
 
 Downloads are below. There is no installer: unzip and run.
+
+**Virtual appliance.** `packhound-appliance-*.ova` (VMware, VirtualBox), `.qcow2` (Proxmox, KVM) and `-hyperv.zip` (Hyper-V): a minimal Debian that runs Packhound around the clock.
+
+- A short setup on the VM console: address (DHCP or static), host name, login. Everything else is in the web console.
+- The web console behind a login, over HTTPS. What you start keeps running, and resumes after a reboot.
+- **SNMP v1/v2c agent** with `PACKHOUND-MIB`: per-stream name, status, rate, packet rate, jitter and errors, indexed by group and port, ready for The Dude and other managers.
+- **REST API** (`/api/v1/...`) with a token, and Prometheus metrics at `/metrics`.
+- Network, host name, time, SSH, reboot and shutdown from Settings.
