@@ -1,6 +1,7 @@
 package monitor
 
 import (
+	"encoding/binary"
 	"fmt"
 	"strings"
 	"time"
@@ -78,22 +79,23 @@ func (t *tsDec) feedTS(at time.Time, b []byte) {
 // datagramHash identifies a datagram for duplicate detection. A datagram of
 // nothing but null packets is legitimately repeated, so it is not hashed.
 func datagramHash(b []byte) (uint64, bool) {
+	// A repeat is byte for byte the same, so it is enough to hash what
+	// differs between datagrams: each TS packet's header, whose continuity
+	// counter moves on with every packet carrying data, and the first bytes
+	// after it. Hashing every byte cost more than the rest of the analysis.
 	real := false
-	for i := 0; i+3 < len(b); i += mpegts.PacketSize {
+	h := uint64(14695981039346656037)
+	for i := 0; i+12 <= len(b); i += mpegts.PacketSize {
 		if (uint16(b[i+1]&0x1f)<<8 | uint16(b[i+2])) != mpegts.NullPID {
 			real = true
-			break
 		}
+		h = (h ^ binary.LittleEndian.Uint64(b[i:])) * 1099511628211
+		h = (h ^ uint64(binary.LittleEndian.Uint32(b[i+8:]))) * 1099511628211
 	}
 	if !real {
 		return 0, false
 	}
-	h := uint64(14695981039346656037)
-	for _, c := range b {
-		h ^= uint64(c)
-		h *= 1099511628211
-	}
-	return h, true
+	return h ^ uint64(len(b)), true
 }
 
 func (t *tsDec) tick(_ *Stream, now time.Time) {

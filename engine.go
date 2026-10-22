@@ -131,7 +131,12 @@ func (e *engine) start(req startRequest) error {
 		if len(gs) == 0 {
 			return errors.New("list the groups to join, one per line, as 239.1.1.1:5000")
 		}
-		j, err := capture.OpenJoin(ifc, gs)
+		open := capture.OpenJoin
+		if mode == modeCapture {
+			// Capture reads the traffic; these sockets only hold the joins.
+			open = capture.OpenHold
+		}
+		j, err := open(ifc, gs)
 		if err != nil {
 			if src != nil {
 				src.Close()
@@ -145,8 +150,6 @@ func (e *engine) start(req startRequest) error {
 		joins = j
 		if mode == modeJoin {
 			src = j
-		} else {
-			j.Drain() // capture reads the traffic; the sockets hold the joins
 		}
 	}
 	if src == nil {
@@ -168,13 +171,15 @@ func (e *engine) start(req startRequest) error {
 	return nil
 }
 
-// tick drives the monitor's once-a-second work, just after each second turns.
+// tick drives the monitor's once-a-second work, a quarter of a second after
+// each second turns: joined groups are read in batches a tenth of a second
+// apart, so by then the second's last datagrams are in.
 func (e *engine) tick(stop chan struct{}, src capture.Source) {
 	d, _ := src.(capture.Dropper)
 	var seen uint64
 	for {
 		now := time.Now()
-		next := now.Truncate(time.Second).Add(time.Second + 20*time.Millisecond)
+		next := now.Truncate(time.Second).Add(time.Second + 250*time.Millisecond)
 		select {
 		case <-stop:
 			return
@@ -192,8 +197,17 @@ func (e *engine) tick(stop chan struct{}, src capture.Source) {
 	}
 }
 
+// batchSource is a source that can hand over many datagrams at once.
+type batchSource interface {
+	NextBatch() ([]pkt.Packet, error)
+}
+
 func (e *engine) read(src capture.Source, done chan struct{}) {
 	defer close(done)
+	if bs, ok := src.(batchSource); ok {
+		e.readBatches(bs, done)
+		return
+	}
 	var p pkt.Packet
 	for {
 		f, err := src.Next()
@@ -224,6 +238,31 @@ func (e *engine) read(src capture.Source, done chan struct{}) {
 		e.mu.Unlock()
 		if rec != nil {
 			rec.write(&p, raw)
+		}
+	}
+}
+
+func (e *engine) readBatches(src batchSource, done chan struct{}) {
+	for {
+		ps, err := src.NextBatch()
+		if err != nil {
+			if !errors.Is(err, capture.ErrClosed) {
+				e.mon.Logf("Capture stopped: %v", err)
+				e.mu.Lock()
+				e.failed = err.Error()
+				e.mu.Unlock()
+				go e.stop()
+			}
+			return
+		}
+		e.mon.IngestBatch(ps)
+		e.mu.Lock()
+		rec := e.rec
+		e.mu.Unlock()
+		if rec != nil {
+			for i := range ps {
+				rec.write(&ps[i], nil)
+			}
 		}
 	}
 }

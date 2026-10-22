@@ -291,7 +291,11 @@ Releases build it in GitHub Actions. It takes about three minutes.
 Capture uses no C code on any platform: an AF_PACKET socket on Linux, a BPF
 device on macOS, and Npcap's `wpcap.dll` loaded at run time on Windows. A
 kernel filter passes only group-addressed frames, so a busy port's unicast
-costs nothing. Join mode uses ordinary UDP sockets, one per group.
+costs nothing. Join mode uses ordinary UDP sockets, one per group; on Linux
+one goroutine drains them all ten times a second with `recvmmsg`, many
+datagrams per call, and takes each datagram's arrival time from the kernel,
+so a line-up of 80 channels costs a few hundred system calls a second rather
+than a wake-up per datagram.
 
 The packages:
 

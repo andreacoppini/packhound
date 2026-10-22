@@ -23,50 +23,77 @@ import (
 // per group, so each socket receives exactly its own group on every platform
 // (Linux, macOS and Windows all filter delivery by per-socket membership when
 // the socket is bound to the group or joined only to it).
+//
+// Datagrams travel to the monitor in batches. On Linux each socket is read a
+// batch at a time, about ten times a second, with the kernel's own arrival
+// time on every datagram: per-datagram wake-ups across a whole IPTV line-up
+// cost far more than the analysis itself.
 type Joined struct {
 	conns  []net.PacketConn
-	ch     chan *joinPkt
+	ch     chan *Batch
 	pool   sync.Pool
-	prev   *joinPkt
+	cur    *Batch
+	pos    int
 	closed chan struct{}
 	once   sync.Once
 	wg     sync.WaitGroup
 	Failed []string // groups that could not be joined, and why
 
-	dropped atomic.Uint64
+	dropped    atomic.Uint64
+	readErrors atomic.Uint64
+	polled     int // sockets read and closed by the Linux poller
+}
+
+// Batch is a run of datagrams from one socket. Payloads point into arena.
+type Batch struct {
+	Pkts  []pkt.Packet
+	arena []byte
 }
 
 // Dropped counts datagrams received but thrown away because the monitor
 // fell behind.
 func (j *Joined) Dropped() uint64 { return j.dropped.Load() }
 
-type joinPkt struct {
-	p   pkt.Packet
-	buf []byte
+// OpenJoin joins every group on ifc and reads them. Groups that fail are
+// listed in Failed; it is an error only if none could be joined.
+func OpenJoin(ifc Interface, gs []groups.Group) (*Joined, error) {
+	return openJoin(ifc, gs, true)
 }
 
-// OpenJoin joins every group on ifc. Groups that fail are listed in Failed;
-// it is an error only if none could be joined.
-func OpenJoin(ifc Interface, gs []groups.Group) (*Joined, error) {
+// OpenHold joins every group on ifc only to hold the joins, for when live
+// capture reads the traffic: the sockets are never read, and keep a buffer
+// too small to cost anything.
+func OpenHold(ifc Interface, gs []groups.Group) (*Joined, error) {
+	return openJoin(ifc, gs, false)
+}
+
+func openJoin(ifc Interface, gs []groups.Group, read bool) (*Joined, error) {
 	ni, err := net.InterfaceByIndex(ifc.Index)
 	if err != nil {
 		return nil, err
 	}
-	j := &Joined{ch: make(chan *joinPkt, 8192), closed: make(chan struct{})}
-	// Queued datagrams hold only their own bytes: a full queue of IPTV
-	// datagrams is about 11 MB, where 64 KB buffers would be half a gigabyte.
-	j.pool.New = func() any { return &joinPkt{buf: make([]byte, 0, 2048)} }
+	// A full queue of IPTV batches is a few tens of megabytes at most: each
+	// batch's arena holds only the datagrams' own bytes.
+	j := &Joined{ch: make(chan *Batch, 1024), closed: make(chan struct{})}
+	j.pool.New = func() any { return &Batch{} }
+	var cs []joined
+	var ok []groups.Group
 	for _, g := range gs {
-		c, err := joinOne(ni, g)
+		c, err := joinOne(ni, g, read)
 		if err != nil {
 			j.Failed = append(j.Failed, fmt.Sprintf("%s: %v", g, err))
 			continue
 		}
-		j.conns = append(j.conns, c.conn)
-		j.wg.Add(1)
-		go j.read(c, g)
+		cs, ok = append(cs, c), append(ok, g)
 	}
-	if len(j.conns) == 0 && len(gs) > 0 {
+	if read {
+		j.startReaders(cs, ok)
+	} else {
+		for _, c := range cs {
+			j.conns = append(j.conns, c.conn)
+		}
+	}
+	if len(cs) == 0 && len(gs) > 0 {
 		return nil, fmt.Errorf("could not join any group: %s", j.Failed[0])
 	}
 	return j, nil
@@ -81,12 +108,15 @@ type joined struct {
 	p6   *ipv6.PacketConn
 }
 
-func joinOne(ni *net.Interface, g groups.Group) (joined, error) {
+func joinOne(ni *net.Interface, g groups.Group, read bool) (joined, error) {
 	lc := net.ListenConfig{Control: func(network, address string, rc syscall.RawConn) error {
 		if err := reuseControl(network, address, rc); err != nil {
 			return err
 		}
-		return rc.Control(func(fd uintptr) { onlyJoinedGroups(fd, g.Addr.Is6()) })
+		return rc.Control(func(fd uintptr) {
+			onlyJoinedGroups(fd, g.Addr.Is6())
+			kernelTimestamps(fd)
+		})
 	}}
 	network, bind := "udp4", fmt.Sprintf("0.0.0.0:%d", g.Port)
 	if g.Addr.Is6() {
@@ -123,23 +153,26 @@ func joinOne(ni *net.Interface, g groups.Group) (joined, error) {
 		}
 		_ = j.p6.SetControlMessage(ipv6.FlagDst, true)
 	}
-	_ = c.(*net.UDPConn).SetReadBuffer(8 << 20)
+	if read {
+		_ = c.(*net.UDPConn).SetReadBuffer(16 << 20)
+	} else {
+		_ = c.(*net.UDPConn).SetReadBuffer(4096)
+	}
 	return j, nil
 }
 
-func (j *Joined) read(c joined, g groups.Group) {
-	defer j.wg.Done()
-	p4, p6 := c.p4, c.p6
+// readOne is the portable reader: one datagram per read, stamped on arrival
+// here. On Linux the poller reads IPv4 groups instead.
+func (j *Joined) readOne(c joined, g groups.Group) {
 	rbuf := make([]byte, 65536) // room for any datagram; copied out at its size
 	for {
-		jp := j.pool.Get().(*joinPkt)
 		var n int
 		var src net.Addr
 		var err error
 		dst := g.Addr
-		if p4 != nil {
+		if c.p4 != nil {
 			var cm *ipv4.ControlMessage
-			n, cm, src, err = p4.ReadFrom(rbuf)
+			n, cm, src, err = c.p4.ReadFrom(rbuf)
 			if cm != nil && cm.Dst != nil {
 				if a, ok := netip.AddrFromSlice(cm.Dst.To4()); ok && a.IsMulticast() {
 					dst = a
@@ -147,84 +180,132 @@ func (j *Joined) read(c joined, g groups.Group) {
 			}
 		} else {
 			var cm *ipv6.ControlMessage
-			n, cm, src, err = p6.ReadFrom(rbuf)
+			n, cm, src, err = c.p6.ReadFrom(rbuf)
 			if cm != nil && cm.Dst != nil {
 				if a, ok := netip.AddrFromSlice(cm.Dst); ok && a.IsMulticast() {
 					dst = a
 				}
 			}
 		}
+		if err != nil {
+			if j.isClosed() || errors.Is(err, net.ErrClosed) {
+				return
+			}
+			continue
+		}
 		// A datagram for another group is someone else's: the socket that
 		// joined that group reports it.
-		if err == nil && dst != g.Addr {
-			j.pool.Put(jp)
+		if dst != g.Addr {
 			continue
 		}
-		if err != nil {
-			j.pool.Put(jp)
-			select {
-			case <-j.closed:
-				return
-			default:
-			}
-			if errors.Is(err, net.ErrClosed) {
-				return
-			}
-			continue
-		}
-		ua, _ := src.(*net.UDPAddr)
-		var sa netip.AddrPort
-		if ua != nil {
-			sa = ua.AddrPort()
-		}
-		over := 28
-		if dst.Is6() {
-			over = 48
-		}
-		jp.buf = append(jp.buf[:0], rbuf[:n]...)
-		jp.p = pkt.Packet{
-			Time: time.Now(), Src: sa.Addr().Unmap(), Dst: dst, Proto: pkt.ProtoUDP,
-			SrcPort: sa.Port(), DstPort: g.Port, IPLen: n + over, Payload: jp.buf,
-		}
-		select {
-		case j.ch <- jp:
-		case <-j.closed:
+		b := j.pool.Get().(*Batch)
+		b.reset()
+		b.add(time.Now(), udpSource(src), g, dst, n, rbuf[:n])
+		if !j.send(b) {
 			return
-		default:
-			j.pool.Put(jp) // the monitor is behind; drop rather than block the socket
-			j.dropped.Add(1)
 		}
+	}
+}
+
+func udpSource(a net.Addr) netip.AddrPort {
+	if ua, ok := a.(*net.UDPAddr); ok {
+		return ua.AddrPort()
+	}
+	return netip.AddrPort{}
+}
+
+func (b *Batch) reset() {
+	b.Pkts = b.Pkts[:0]
+	b.arena = b.arena[:0]
+}
+
+// add appends one datagram. size is its length on the wire, which can be
+// more than len(data) when a read truncated it.
+func (b *Batch) add(at time.Time, src netip.AddrPort, g groups.Group, dst netip.Addr, size int, data []byte) {
+	over := 28
+	if dst.Is6() {
+		over = 48
+	}
+	start := len(b.arena)
+	b.arena = append(b.arena, data...)
+	b.Pkts = append(b.Pkts, pkt.Packet{
+		Time: at, Src: src.Addr().Unmap(), Dst: dst, Proto: pkt.ProtoUDP,
+		SrcPort: src.Port(), DstPort: g.Port, IPLen: size + over,
+		Payload: b.arena[start:len(b.arena):len(b.arena)],
+	})
+}
+
+// fixPayloads repoints payloads after the arena grew (append may move it).
+func (b *Batch) fixPayloads() {
+	off := 0
+	for i := range b.Pkts {
+		n := len(b.Pkts[i].Payload)
+		b.Pkts[i].Payload = b.arena[off : off+n : off+n]
+		off += n
+	}
+}
+
+func (j *Joined) isClosed() bool {
+	select {
+	case <-j.closed:
+		return true
+	default:
+		return false
+	}
+}
+
+// send queues a batch for the monitor, or drops it if the monitor is behind.
+func (j *Joined) send(b *Batch) bool {
+	b.fixPayloads()
+	select {
+	case j.ch <- b:
+		return true
+	case <-j.closed:
+		return false
+	default:
+		j.dropped.Add(uint64(len(b.Pkts)))
+		j.pool.Put(b)
+		return true
+	}
+}
+
+// NextBatch returns the next batch of datagrams. The batch is valid until
+// the next call to NextBatch or Next.
+func (j *Joined) NextBatch() ([]pkt.Packet, error) {
+	if j.cur != nil {
+		j.pool.Put(j.cur)
+		j.cur = nil
+	}
+	select {
+	case b := <-j.ch:
+		j.cur, j.pos = b, len(b.Pkts)
+		return b.Pkts, nil
+	case <-j.closed:
+		return nil, ErrClosed
 	}
 }
 
 // Next returns the next datagram from any joined group.
 func (j *Joined) Next() (Frame, error) {
-	if j.prev != nil {
-		j.pool.Put(j.prev)
-		j.prev = nil
-	}
-	select {
-	case jp := <-j.ch:
-		j.prev = jp
-		return Frame{Pkt: &jp.p, Time: jp.p.Time}, nil
-	case <-j.closed:
-		return Frame{}, ErrClosed
-	}
-}
-
-// Drain discards everything received, for when the sockets are only there to
-// hold the joins while live capture does the reading.
-func (j *Joined) Drain() {
-	go func() {
-		for {
-			if _, err := j.Next(); err != nil {
-				return
-			}
+	for j.cur == nil || j.pos >= len(j.cur.Pkts) {
+		if j.cur != nil {
+			j.pool.Put(j.cur)
+			j.cur = nil
 		}
-	}()
+		select {
+		case b := <-j.ch:
+			j.cur, j.pos = b, 0
+		case <-j.closed:
+			return Frame{}, ErrClosed
+		}
+	}
+	p := &j.cur.Pkts[j.pos]
+	j.pos++
+	return Frame{Pkt: p, Time: p.Time}, nil
 }
 
-// Close leaves every group.
+// Close leaves every group. Sockets the Linux poller reads are closed by
+// the poller itself as it stops, within a tenth of a second.
 func (j *Joined) Close() error {
 	j.once.Do(func() {
 		close(j.closed)
@@ -236,4 +317,4 @@ func (j *Joined) Close() error {
 }
 
 // Count is how many groups are joined.
-func (j *Joined) Count() int { return len(j.conns) }
+func (j *Joined) Count() int { return len(j.conns) + j.polled }

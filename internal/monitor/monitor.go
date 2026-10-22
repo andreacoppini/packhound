@@ -197,6 +197,19 @@ func (m *Monitor) Reset() {
 func (m *Monitor) Ingest(p *pkt.Packet) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.ingest(p)
+}
+
+// IngestBatch takes a run of packets under one lock.
+func (m *Monitor) IngestBatch(ps []pkt.Packet) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i := range ps {
+		m.ingest(&ps[i])
+	}
+}
+
+func (m *Monitor) ingest(p *pkt.Packet) {
 	if m.started.IsZero() {
 		m.started = p.Time
 	}
