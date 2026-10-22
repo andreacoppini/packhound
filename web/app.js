@@ -443,7 +443,7 @@ function rowHTML(r) {
 <td class="m">${esc(r.group)}${r.playURL && !ui.server ? ' <span class="playable" title="Double-click to open in VLC">▶</span>' : ""}</td>
 <td><span class="badge k-${r.kind}">${esc(r.type)}</span></td>
 <td class="name" title="${esc(r.name)}">${esc(r.name)}</td>
-<td class="m">${esc(r.sender)}</td>
+<td class="m">${esc(r.sender)}${r.senderName ? ` <span class="sname">${esc(r.senderName)}</span>` : ""}</td>
 <td class="num m">${fmtRate(r.bps)}</td>
 <td>${spark(r.spark, color)}</td>
 <td class="num m">${fmtNum(r.pps)}</td>

@@ -255,6 +255,7 @@ type apiStream struct {
 	Type                   string    `json:"type"`
 	Name                   string    `json:"name"`
 	Sender                 string    `json:"sender"`
+	SenderName             string    `json:"senderName,omitempty"`
 	Senders                int       `json:"senders"`
 	Status                 string    `json:"status"`
 	StatusCode             int64     `json:"statusCode"`
@@ -277,7 +278,7 @@ type apiStream struct {
 func toAPI(r monitor.Row) apiStream {
 	a := apiStream{
 		ID: r.Group, Group: r.Group, Address: r.Addr, Port: r.Port, Family: r.Family, Protocol: r.Proto,
-		Kind: kindName(r.Kind), Type: r.Type, Name: r.Name, Sender: r.Sender, Senders: r.Senders,
+		Kind: kindName(r.Kind), Type: r.Type, Name: r.Name, Sender: r.Sender, SenderName: r.SenderName, Senders: r.Senders,
 		Status: string(r.Status), StatusCode: statusCode[r.Status], Problem: r.Reason,
 		BitRate: math.Round(r.BPS), PacketRate: math.Round(r.PPS*10) / 10, AvgSize: r.AvgSize,
 		ErrorsLastMinute: r.ErrorsLastMinute, SenderErrorsLastMinute: r.SourceErrors,

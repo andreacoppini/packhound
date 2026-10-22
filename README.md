@@ -100,6 +100,14 @@ hour, and what the protocol says.
   duplicated rather than as a run of CC errors. If the capturing machine
   itself drops packets because its buffer overflowed, the header says so,
   since the errors it causes are not on the network.
+- **Dante:** multicast flows (239.255.x.x, port 4321) named after the device
+  that sends them; the PTPv1 clock leader, with its address, device name,
+  stratum and sync interval; and the devices and their channels from their
+  mDNS announcements. Dante's audio format is its own, so a native flow
+  shows rate, packets, jitter and whether it stops, but not channel content;
+  a device in AES67 mode shows as AES67, with packet loss. Dante sends audio
+  unicast unless a flow is set to multicast, and unicast flows are not
+  visible to a multicast monitor.
 - **AES67 and RTP audio:** format, packet time and sender, named from SAP.
 - **mDNS:** every service announced (AirPlay, Chromecast, printers, Sonos,
   HomeKit and so on) with its host, address and port, and what is being asked

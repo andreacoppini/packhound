@@ -74,7 +74,8 @@ type Monitor struct {
 	cfg     Config
 	streams map[Key]*Stream
 	frags   map[fragKey]uint16
-	sdp     map[string]sdpInfo // "group:port" -> what SAP said about it
+	sdp     map[string]sdpInfo    // "group:port" -> what SAP said about it
+	hosts   map[netip.Addr]string // device names announced over mDNS
 	alerts  []Alert
 	log     []LogLine
 	started time.Time
@@ -115,6 +116,21 @@ func (m *Monitor) logLocal(now time.Time) {
 	m.localUnlogged = 0
 	m.localLogged = now
 }
+
+// noteHost records the name a device announced for its address (mDNS), so
+// other streams can say which device sends them. Called under m.mu.
+func (m *Monitor) noteHost(a netip.Addr, name string) {
+	if !a.IsValid() || name == "" {
+		return
+	}
+	if m.hosts == nil || len(m.hosts) >= 4096 {
+		m.hosts = map[netip.Addr]string{}
+	}
+	m.hosts[a.Unmap()] = name
+}
+
+// hostName is the announced name for an address, or "". Called under m.mu.
+func (m *Monitor) hostName(a netip.Addr) string { return m.hosts[a.Unmap()] }
 
 type fragKey struct {
 	src netip.Addr
@@ -186,6 +202,7 @@ func (m *Monitor) Reset() {
 	m.streams = map[Key]*Stream{}
 	m.frags = map[fragKey]uint16{}
 	m.sdp = map[string]sdpInfo{}
+	m.hosts = nil
 	m.alerts = nil
 	m.log = nil
 	m.started = time.Time{}

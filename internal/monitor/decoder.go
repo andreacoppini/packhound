@@ -156,12 +156,12 @@ func classify(m *Monitor, k Key, p *pkt.Packet) (Kind, string, decoder) {
 		return KindDiscovery, "Syncthing", &genericDec{label: "Syncthing discovery"}
 	case 8700, 8701, 8702, 8703, 8704, 8705, 8706, 8707, 8708:
 		if k.Dst.Is4() && k.Dst.As4()[0] == 224 {
-			return KindDiscovery, "Dante control", &genericDec{label: "Dante device control"}
+			return KindDiscovery, "Dante control", &genericDec{label: "Dante device control", byDevice: true}
 		}
 	case 4321:
 		if k.Dst.Is4() {
 			if a := k.Dst.As4(); a[0] == 239 && a[1] == 255 {
-				return KindAudio, "Dante audio", &genericDec{label: "Dante multicast flow"}
+				return KindAudio, "Dante audio", &genericDec{label: "Dante multicast flow", byDevice: true}
 			}
 		}
 	}
@@ -187,8 +187,11 @@ func classify(m *Monitor, k Key, p *pkt.Packet) (Kind, string, decoder) {
 type genericDec struct {
 	base
 	label string
-	head  []byte
-	size  int
+	// byDevice adds the sending device's announced name to the label, so a
+	// device's flows group together when sorted by name.
+	byDevice bool
+	head     []byte
+	size     int
 }
 
 func (g *genericDec) feed(_ *Stream, p *pkt.Packet) {
@@ -200,8 +203,13 @@ func (g *genericDec) feed(_ *Stream, p *pkt.Packet) {
 	g.size = len(p.Payload)
 }
 
-func (g *genericDec) name(*Stream) string {
+func (g *genericDec) name(s *Stream) string {
 	if g.label != "" {
+		if g.byDevice {
+			if dev := s.deviceName(); dev != "" {
+				return dev + " · " + g.label
+			}
+		}
 		return g.label
 	}
 	return "(unrecognised payload)"

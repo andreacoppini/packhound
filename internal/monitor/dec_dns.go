@@ -47,7 +47,7 @@ func (d *dnsDec) tick(*Stream, time.Time) {
 	d.responses.roll()
 }
 
-func (d *dnsDec) feed(_ *Stream, p *pkt.Packet) {
+func (d *dnsDec) feed(s *Stream, p *pkt.Packet) {
 	msg, ok := parseDNS(p.Payload)
 	if !ok {
 		return
@@ -84,6 +84,9 @@ func (d *dnsDec) feed(_ *Stream, p *pkt.Packet) {
 				sv.host, sv.port = rr.target, rr.port
 			}
 		case 1, 28: // A, AAAA
+			if d.mdns {
+				s.m.noteHost(rr.addr, strings.TrimSuffix(strings.TrimSuffix(rr.name, "."), ".local"))
+			}
 			if len(d.hosts) >= maxDNSEntries {
 				continue
 			}
@@ -130,7 +133,15 @@ func (d *dnsDec) name(*Stream) string {
 		for _, s := range d.services {
 			types[s.stype] = true
 		}
-		return fmt.Sprintf("Bonjour / mDNS · %d services, %d types", len(d.services), len(types))
+		n := fmt.Sprintf("Bonjour / mDNS · %d services, %d types", len(d.services), len(types))
+		switch dante := len(d.danteDevices()); dante {
+		case 0:
+		case 1:
+			n += " · 1 Dante device"
+		default:
+			n += fmt.Sprintf(" · %d Dante devices", dante)
+		}
+		return n
 	}
 	return fmt.Sprintf("Windows name lookups · %d names", len(d.asked))
 }
@@ -168,6 +179,17 @@ func (d *dnsDec) describe(s *Stream, det *Detail) {
 			tb.Rows = append(tb.Rows, []string{sv.instance, serviceLabel(sv.stype), strings.TrimSuffix(sv.host, "."), addr, port, ago(now, sv.last)})
 		}
 		det.Tables = append(det.Tables, tb)
+		if devs := d.danteDevices(); len(devs) > 0 {
+			dt := Table{Title: "Dante devices", Cols: []string{"Device", "Host", "Address", "Channels announced", "Last heard"}}
+			for _, dv := range devs {
+				addr := ""
+				if a := d.hosts[dv.host]; len(a) > 0 {
+					addr = a[0].String()
+				}
+				dt.Rows = append(dt.Rows, []string{dv.instance, strings.TrimSuffix(dv.host, "."), addr, fmt.Sprint(d.danteChannels(dv.instance)), ago(now, dv.last)})
+			}
+			det.Tables = append(det.Tables, dt)
+		}
 	}
 
 	asked := make([]*askedName, 0, len(d.asked))
@@ -185,6 +207,31 @@ func (d *dnsDec) describe(s *Stream, det *Detail) {
 	det.Tables = append(det.Tables, tb)
 }
 
+// danteDevices lists the Dante devices announced, by their ARC service: every
+// Dante device announces one, named after the device.
+func (d *dnsDec) danteDevices() []*mdnsService {
+	var out []*mdnsService
+	for _, sv := range d.services {
+		if sv.stype == "_netaudio-arc._udp" {
+			out = append(out, sv)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].instance < out[j].instance })
+	return out
+}
+
+// danteChannels counts a device's announced channels: Dante names each one
+// "channel@device".
+func (d *dnsDec) danteChannels(device string) int {
+	n := 0
+	for _, sv := range d.services {
+		if sv.stype == "_netaudio-chan._udp" && strings.HasSuffix(sv.instance, "@"+device) {
+			n++
+		}
+	}
+	return n
+}
+
 // serviceLabel names the DNS-SD service types people meet on real networks.
 func serviceLabel(t string) string {
 	known := map[string]string{
@@ -200,6 +247,8 @@ func serviceLabel(t string) string {
 		"_rdlink._tcp": "Apple remote", "_touch-able._tcp": "Apple remote", "_daap._tcp": "iTunes sharing",
 		"_workstation._tcp": "Workstation", "_rfb._tcp": "Screen sharing (VNC)", "_adisk._tcp": "Time Machine",
 		"_nvstream._tcp": "NVIDIA streaming", "_esphomelib._tcp": "ESPHome", "_home-assistant._tcp": "Home Assistant",
+		"_netaudio-arc._udp": "Dante device", "_netaudio-chan._udp": "Dante channel",
+		"_netaudio-cmc._udp": "Dante control and monitoring", "_netaudio-dbc._udp": "Dante device control",
 	}
 	if l, ok := known[t]; ok {
 		return l + " (" + t + ")"

@@ -1,6 +1,7 @@
 package monitor
 
 import (
+	"bytes"
 	"fmt"
 	"net/netip"
 	"sort"
@@ -12,18 +13,25 @@ import (
 
 // ---- PTP ----
 
+// Both versions share 224.0.1.129 and ports 319/320: PTPv2 (IEEE 1588-2008)
+// for AES67 and most broadcast gear, and PTPv1 (IEEE 1588-2002), which Dante
+// devices use to elect their clock leader unless set to AES67 mode.
+
 var ptpTypes = map[uint8]string{
 	0x0: "Sync", 0x1: "Delay_Req", 0x2: "Pdelay_Req", 0x3: "Pdelay_Resp",
 	0x8: "Follow_Up", 0x9: "Delay_Resp", 0xa: "Pdelay_Resp_Follow_Up", 0xb: "Announce",
 	0xc: "Signaling", 0xd: "Management",
 }
 
+// PTPv1 names its messages by the header's control field.
+var ptpV1Types = map[uint8]string{0: "Sync", 1: "Delay_Req", 2: "Follow_Up", 3: "Delay_Resp", 4: "Management"}
+
 type ptpDec struct {
 	base
-	version  uint8
+	version  uint8 // of the latest message
 	domains  map[uint8]bool
-	counts   map[uint8]*window
-	clocks   map[string]netip.Addr // source clock identities and their address
+	counts   map[uint16]*window // version<<8 | message type
+	clocks   map[string]netip.Addr
 	gm       string
 	gmClass  uint8
 	gmAcc    uint8
@@ -33,14 +41,52 @@ type ptpDec struct {
 	source   uint8
 	interval int8 // log2 seconds, from Sync
 	haveSync bool
+
+	v1 ptpV1
+}
+
+// ptpV1 is what PTPv1 Sync messages say about the clock in charge.
+type ptpV1 struct {
+	seen      bool
+	subdomain string
+	gm        string // grandmaster clock UUID (a MAC address)
+	stratum   uint8
+	ident     string // "DFLT", "GPS", "ATOM" ...
+	preferred bool
+	boundary  bool
+	interval  int8 // log2 seconds
+	steps     uint16
+	haveSync  bool
 }
 
 func newPTP() *ptpDec {
-	return &ptpDec{domains: map[uint8]bool{}, counts: map[uint8]*window{}, clocks: map[string]netip.Addr{}}
+	return &ptpDec{domains: map[uint8]bool{}, counts: map[uint16]*window{}, clocks: map[string]netip.Addr{}}
 }
 
 func clockID(b []byte) string {
 	return fmt.Sprintf("%02x%02x%02x.%02x%02x.%02x%02x%02x", b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7])
+}
+
+func uuid6(b []byte) string {
+	return fmt.Sprintf("%02x:%02x:%02x:%02x:%02x:%02x", b[0], b[1], b[2], b[3], b[4], b[5])
+}
+
+// cstring reads a NUL-padded text field.
+func cstring(b []byte) string {
+	if i := bytes.IndexByte(b, 0); i >= 0 {
+		b = b[:i]
+	}
+	return strings.TrimSpace(string(b))
+}
+
+func (d *ptpDec) count(version, typ uint8) {
+	k := uint16(version)<<8 | uint16(typ)
+	w := d.counts[k]
+	if w == nil {
+		w = &window{}
+		d.counts[k] = w
+	}
+	w.add(1)
 }
 
 func (d *ptpDec) feed(_ *Stream, p *pkt.Packet) {
@@ -48,18 +94,19 @@ func (d *ptpDec) feed(_ *Stream, p *pkt.Packet) {
 	if len(b) < 34 {
 		return
 	}
-	d.version = b[1] & 0x0f
-	if d.version != 2 {
-		return
+	switch {
+	case b[1]&0x0f == 2:
+		d.feedV2(p, b)
+	case b[0] == 0 && b[1] == 1 && len(b) >= 40:
+		d.feedV1(p, b)
 	}
+}
+
+func (d *ptpDec) feedV2(p *pkt.Packet, b []byte) {
+	d.version = 2
 	mt := b[0] & 0x0f
 	d.domains[b[4]] = true
-	w := d.counts[mt]
-	if w == nil {
-		w = &window{}
-		d.counts[mt] = w
-	}
-	w.add(1)
+	d.count(2, mt)
 	if len(d.clocks) < 64 {
 		d.clocks[clockID(b[20:28])] = p.Src
 	}
@@ -77,6 +124,32 @@ func (d *ptpDec) feed(_ *Stream, p *pkt.Packet) {
 	}
 }
 
+// feedV1 reads a PTPv1 message: a 40-byte header (version, subdomain name,
+// the sender's UUID and a control field naming the message), then for Sync
+// and Delay_Req the grandmaster's description.
+func (d *ptpDec) feedV1(p *pkt.Packet, b []byte) {
+	d.version = 1
+	v := &d.v1
+	v.seen = true
+	v.subdomain = cstring(b[4:20])
+	control := b[32]
+	d.count(1, control)
+	if len(d.clocks) < 64 {
+		d.clocks[uuid6(b[22:28])] = p.Src
+	}
+	if control != 0 || len(b) < 124 {
+		return
+	}
+	v.haveSync = true
+	v.gm = uuid6(b[54:60])
+	v.stratum = b[67]
+	v.ident = cstring(b[68:72])
+	v.preferred = b[77] != 0
+	v.boundary = b[79] != 0
+	v.interval = int8(b[83])
+	v.steps = u16(b[90:])
+}
+
 func (d *ptpDec) tick(*Stream, time.Time) {
 	for _, w := range d.counts {
 		w.roll()
@@ -84,15 +157,25 @@ func (d *ptpDec) tick(*Stream, time.Time) {
 }
 
 func (d *ptpDec) name(*Stream) string {
-	if d.version == 1 {
-		return "PTPv1"
+	var parts []string
+	if d.gm != "" || len(d.domains) > 0 {
+		n := "PTPv2, domain " + d.domainList()
+		if d.gm != "" {
+			n += " · grandmaster " + d.gm
+		}
+		parts = append(parts, n)
 	}
-	doms := d.domainList()
-	n := "Precision Time Protocol, domain " + doms
-	if d.gm != "" {
-		n += " · grandmaster " + d.gm
+	if d.v1.seen {
+		n := "PTPv1 (Dante)"
+		if d.v1.gm != "" {
+			n += " · clock leader " + d.v1.gm
+		}
+		parts = append(parts, n)
 	}
-	return n
+	if len(parts) == 0 {
+		return "Precision Time Protocol"
+	}
+	return strings.Join(parts, " · ")
 }
 
 func (d *ptpDec) domainList() string {
@@ -107,10 +190,11 @@ func (d *ptpDec) domainList() string {
 var ptpSources = map[uint8]string{0x10: "atomic clock", 0x20: "GNSS", 0x30: "terrestrial radio", 0x40: "PTP", 0x50: "NTP", 0x60: "hand set", 0x90: "other", 0xa0: "internal oscillator"}
 
 func (d *ptpDec) describe(s *Stream, det *Detail) {
-	det.add("Protocol", fmt.Sprintf("IEEE 1588 PTPv%d", d.version))
-	det.add("Domain", d.domainList())
+	if len(d.domains) > 0 {
+		det.add("PTPv2 domain", d.domainList())
+	}
 	if d.gm != "" {
-		det.add("Grandmaster", d.gm)
+		det.add("PTPv2 grandmaster", d.gm)
 		det.add("Clock class / accuracy", fmt.Sprintf("%d / 0x%02x", d.gmClass, d.gmAcc))
 		det.add("Priority 1 / 2", fmt.Sprintf("%d / %d", d.gmP1, d.gmP2))
 		det.add("Steps removed", fmt.Sprint(d.steps))
@@ -119,25 +203,54 @@ func (d *ptpDec) describe(s *Stream, det *Detail) {
 		}
 	}
 	if d.haveSync {
-		det.add("Sync interval", fmt.Sprintf("%g ms", 1000*pow2(d.interval)))
+		det.add("PTPv2 sync interval", fmt.Sprintf("%g ms", 1000*pow2(d.interval)))
 	}
-	tb := Table{Title: "Messages", Cols: []string{"Message", "Per second"}}
-	var mts []int
-	for k := range d.counts {
-		mts = append(mts, int(k))
-	}
-	sort.Ints(mts)
-	for _, k := range mts {
-		name := ptpTypes[uint8(k)]
-		if name == "" {
-			name = fmt.Sprintf("type %d", k)
+	if v := d.v1; v.seen {
+		det.add("PTPv1 subdomain", v.subdomain)
+		if v.haveSync {
+			leader := v.gm
+			if a, ok := d.clocks[v.gm]; ok {
+				leader += " at " + a.String()
+				if n := s.m.hostName(a); n != "" {
+					leader += " (" + n + ")"
+				}
+			}
+			det.add("PTPv1 clock leader", leader)
+			det.add("Leader stratum / identifier", fmt.Sprintf("%d / %s", v.stratum, v.ident))
+			flags := []string{}
+			if v.preferred {
+				flags = append(flags, "preferred")
+			}
+			if v.boundary {
+				flags = append(flags, "boundary clock")
+			}
+			if len(flags) > 0 {
+				det.add("Leader", strings.Join(flags, ", "))
+			}
+			det.add("PTPv1 sync interval", fmt.Sprintf("%g s", pow2(v.interval)))
 		}
-		tb.Rows = append(tb.Rows, []string{name, fmt.Sprintf("%.1f", d.counts[uint8(k)].perSecond(10))})
+	}
+	tb := Table{Title: "Messages", Cols: []string{"Version", "Message", "Per second"}}
+	var keys []int
+	for k := range d.counts {
+		keys = append(keys, int(k))
+	}
+	sort.Ints(keys)
+	for _, k := range keys {
+		ver, typ := uint8(k>>8), uint8(k)
+		name := ptpTypes[typ]
+		if ver == 1 {
+			name = ptpV1Types[typ]
+		}
+		if name == "" {
+			name = fmt.Sprintf("type %d", typ)
+		}
+		tb.Rows = append(tb.Rows, []string{fmt.Sprintf("v%d", ver), name, fmt.Sprintf("%.1f", d.counts[uint16(k)].perSecond(10))})
 	}
 	det.Tables = append(det.Tables, tb)
-	ct := Table{Title: "Clocks heard", Cols: []string{"Clock identity", "Address"}}
+	ct := Table{Title: "Clocks heard", Cols: []string{"Clock identity", "Address", "Device"}}
 	for id, a := range d.clocks {
-		ct.Rows = append(ct.Rows, []string{id, a.String()})
+		ct.Rows = append(ct.Rows, []string{id, a.String(), s.m.hostName(a)})
 	}
 	sort.Slice(ct.Rows, func(i, j int) bool { return ct.Rows[i][0] < ct.Rows[j][0] })
 	det.Tables = append(det.Tables, ct)

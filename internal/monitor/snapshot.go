@@ -34,6 +34,8 @@ type Row struct {
 	SourceErrors uint64 `json:"sourceErrors,omitempty"`
 	// ErrorsLastMinute is the number behind Errors: loss in the last minute.
 	ErrorsLastMinute uint64 `json:"errorsLastMinute"`
+	// SenderName is what the single sender calls itself over mDNS, if it does.
+	SenderName string `json:"senderName,omitempty"`
 	// PlayURL opens the stream in a player such as VLC, for streams one can
 	// play: MPEG-TS over UDP or RTP.
 	PlayURL     string    `json:"playURL,omitempty"`
@@ -167,6 +169,7 @@ func (s *Stream) row() Row {
 		r.Proto = fmt.Sprintf("IP %d", s.key.Proto)
 	}
 	r.PlayURL = s.playURL()
+	r.SenderName = s.deviceName()
 	if s.key.Dst == solicitedNode.Addr() {
 		r.Addr = solicitedNode.String()
 	}
@@ -236,6 +239,9 @@ func (s *Stream) detail(r Row, window int) *StreamDetail {
 	if s.vlan != 0 {
 		d.add("VLAN", fmt.Sprint(s.vlan))
 	}
+	if dev := s.deviceName(); dev != "" {
+		d.add("Sender's name", dev+" (announced over mDNS)")
+	}
 	if s.reason != "" {
 		d.add("Problem", s.reason)
 		if n := s.m.localWin.minute(); n > 0 && s.kind.media() {
@@ -269,7 +275,7 @@ func (s *Stream) detail(r Row, window int) *StreamDetail {
 	}
 	d.Step = step
 
-	d.Senders = Table{Title: "Senders", Cols: []string{"Sender", "Packets/s", "Rate", "Packets", "First seen", "Last"}}
+	d.Senders = Table{Title: "Senders", Cols: []string{"Sender", "Name", "Packets/s", "Rate", "Packets", "First seen", "Last"}}
 	list := make([]*sender, 0, len(s.senders))
 	for _, x := range s.senders {
 		list = append(list, x)
@@ -286,7 +292,7 @@ func (s *Stream) detail(r Row, window int) *StreamDetail {
 		}
 		k := float64(len(x.win))
 		d.Senders.Rows = append(d.Senders.Rows, []string{
-			x.addr.String(), fmt.Sprintf("%.1f", float64(p)/k), FormatRate(float64(b) * 8 / k),
+			x.addr.String(), s.m.hostName(x.addr), fmt.Sprintf("%.1f", float64(p)/k), FormatRate(float64(b) * 8 / k),
 			fmt.Sprint(x.pkts), ago(s.m.now, x.first), ago(s.m.now, x.last),
 		})
 	}

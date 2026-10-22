@@ -132,6 +132,7 @@ func (s *Source) build() {
 		}})
 
 	s.aes67()
+	s.dante()
 	s.sap()
 	s.mdns()
 	s.ssdp()
@@ -347,6 +348,9 @@ func (s *Source) mdns() {
 		{"10.20.7.9", "homeassistant", "Home", "_home-assistant._tcp", 8123},
 		{"10.20.3.60", "NDI-PTZ-1", "PTZ1 (Stage)", "_ndi._tcp", 5961},
 		{"10.20.2.77", "Kates-MacBook-Pro", "Kate's MacBook Pro", "_companion-link._tcp", 49152},
+		{"10.20.6.40", "Stagebox-1", "Stagebox-1", "_netaudio-arc._udp", 4440},
+		{"10.20.6.40", "Stagebox-1", "Mic 1@Stagebox-1", "_netaudio-chan._udp", 4440},
+		{"10.20.6.40", "Stagebox-1", "Mic 2@Stagebox-1", "_netaudio-chan._udp", 4440},
 	}
 	i := 0
 	s.add(50*time.Millisecond, func(now time.Time) ([]byte, time.Duration) {
@@ -427,6 +431,31 @@ func (s *Source) wsd() {
 }
 
 // ---- timing and routing ----
+
+// dante is a Dante device in its native mode: a multicast flow in Dante's
+// own format, and its clock on PTPv1.
+func (s *Source) dante() {
+	payload := make([]byte, 280)
+	s.add(3*time.Millisecond, func(now time.Time) ([]byte, time.Duration) {
+		return udp("10.20.6.40", "239.255.10.20", 4321, 4321, payload), time.Millisecond
+	})
+	uuid := []byte{0x00, 0x1d, 0xc1, 0x0a, 0x66, 0x40}
+	s.add(15*time.Millisecond, func(now time.Time) ([]byte, time.Duration) {
+		b := make([]byte, 124)
+		binary.BigEndian.PutUint16(b[0:], 1)
+		binary.BigEndian.PutUint16(b[2:], 1)
+		copy(b[4:], "_DFLT")
+		b[20], b[21] = 1, 1
+		copy(b[22:28], uuid)
+		b[53] = 1
+		copy(b[54:60], uuid)
+		b[67] = 4
+		copy(b[68:72], "DFLT")
+		b[77] = 1
+		b[83] = 0xfe // every 250 ms
+		return udp("10.20.6.40", "224.0.1.129", 319, 319, b), 250 * time.Millisecond
+	})
+}
 
 func (s *Source) ptp() {
 	gm := []byte{0x00, 0x1d, 0xc1, 0xff, 0xfe, 0x0a, 0x44, 0x12}

@@ -306,6 +306,18 @@ func (s *Stream) name() string {
 	return ""
 }
 
+// deviceName is the announced name of the stream's sender, when it has
+// exactly one and that one has announced itself over mDNS.
+func (s *Stream) deviceName() string {
+	if len(s.senders) != 1 {
+		return ""
+	}
+	for a := range s.senders {
+		return s.m.hostName(a)
+	}
+	return ""
+}
+
 func (s *Stream) groupLabel() string {
 	g := s.key.Dst.String()
 	if s.key.Dst == solicitedNode.Addr() {
