@@ -203,6 +203,7 @@ td.name { max-width: 300px; overflow: hidden; text-overflow: ellipsis; }
 .st-idle { background: #1b212a; color: #a9b4c2; }
 .e-ok { color: var(--muted); }
 .e-err { color: #ff9b9b; }
+.srcerr { color: #c9a95a; font-size: 11px; }
 svg.spark { display: block; }
 
 /* ---- drawer ---- */

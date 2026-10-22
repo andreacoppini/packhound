@@ -11,32 +11,35 @@ import (
 
 // Row is one stream as the table shows it.
 type Row struct {
-	Key         string    `json:"key"`
-	Family      int       `json:"family"` // 4 or 6
-	Group       string    `json:"group"`
-	Addr        string    `json:"addr"`
-	Port        int       `json:"port"`
-	Proto       string    `json:"proto"`
-	Kind        Kind      `json:"kind"`
-	Type        string    `json:"type"`
-	Name        string    `json:"name"`
-	Sender      string    `json:"sender"`
-	Senders     int       `json:"senders"`
-	BPS         float64   `json:"bps"`
-	PPS         float64   `json:"pps"`
-	AvgSize     int       `json:"avgSize"`
-	JitterMs    float64   `json:"jitterMs"` // -1 when not meaningful
-	Errors      string    `json:"errors"`
-	ErrLevel    string    `json:"errLevel"`
-	Status      Status    `json:"status"`
-	StatusLevel string    `json:"statusLevel"`
-	Reason      string    `json:"reason,omitempty"`
-	Spark       []float64 `json:"spark"`
-	FirstSeen   time.Time `json:"firstSeen"`
-	LastSeen    time.Time `json:"lastSeen"`
-	Packets     uint64    `json:"packets"`
-	Bytes       uint64    `json:"bytes"`
-	VLAN        uint16    `json:"vlan,omitempty"`
+	Key      string  `json:"key"`
+	Family   int     `json:"family"` // 4 or 6
+	Group    string  `json:"group"`
+	Addr     string  `json:"addr"`
+	Port     int     `json:"port"`
+	Proto    string  `json:"proto"`
+	Kind     Kind    `json:"kind"`
+	Type     string  `json:"type"`
+	Name     string  `json:"name"`
+	Sender   string  `json:"sender"`
+	Senders  int     `json:"senders"`
+	BPS      float64 `json:"bps"`
+	PPS      float64 `json:"pps"`
+	AvgSize  int     `json:"avgSize"`
+	JitterMs float64 `json:"jitterMs"` // -1 when not meaningful
+	Errors   string  `json:"errors"`
+	ErrLevel string  `json:"errLevel"`
+	// Continuity errors in the last minute that the sender made: in the
+	// stream as sent, nothing lost on the network.
+	SourceErrors uint64    `json:"sourceErrors,omitempty"`
+	Status       Status    `json:"status"`
+	StatusLevel  string    `json:"statusLevel"`
+	Reason       string    `json:"reason,omitempty"`
+	Spark        []float64 `json:"spark"`
+	FirstSeen    time.Time `json:"firstSeen"`
+	LastSeen     time.Time `json:"lastSeen"`
+	Packets      uint64    `json:"packets"`
+	Bytes        uint64    `json:"bytes"`
+	VLAN         uint16    `json:"vlan,omitempty"`
 }
 
 // StreamDetail is the detail panel for one stream.
@@ -184,6 +187,16 @@ func (s *Stream) row() Row {
 			if errs > 0 {
 				r.Errors = fmt.Sprintf("%d /min", errs)
 				r.ErrLevel = "err"
+			}
+		}
+	}
+	// Errors the sender made are shown, but apart: they are in the stream as
+	// sent, not lost on the network, and do not make it Degraded.
+	if se, ok := s.dec.(interface{ sourceErrorsLastMinute() uint64 }); ok {
+		if n := se.sourceErrorsLastMinute(); n > 0 {
+			r.SourceErrors = n
+			if r.ErrLevel == "ok" {
+				r.ErrLevel = "src"
 			}
 		}
 	}

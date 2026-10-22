@@ -55,32 +55,66 @@ func TestAnalyzerReadsTables(t *testing.T) {
 	}
 }
 
-func TestContinuityErrors(t *testing.T) {
+// datagrams cuts a channel's output into raw-UDP datagrams of seven packets.
+func datagrams(m *Muxer, n int) [][]byte {
+	var all []byte
+	for len(all) < n*7*PacketSize {
+		all = append(all, channel(m)...)
+		for i := 0; i < 20; i++ {
+			for _, p := range m.PES(0x65, 0xe0, make([]byte, 170)) {
+				all = append(all, p...)
+			}
+			for _, p := range m.PES(0x66, 0xc0, make([]byte, 170)) {
+				all = append(all, p...)
+			}
+		}
+	}
+	out := make([][]byte, n)
+	for i := range out {
+		out[i] = all[i*7*PacketSize : (i+1)*7*PacketSize]
+	}
+	return out
+}
+
+func TestLostDatagramIsLoss(t *testing.T) {
+	a := NewAnalyzer()
+	for i, d := range datagrams(NewMuxer(), 200) {
+		if i == 100 || i == 150 {
+			continue // lost on the network
+		}
+		a.Feed(d)
+	}
+	if a.CCErrors == 0 || a.CCSource != 0 || a.CCLastMinute() != a.CCErrors || a.Missing == 0 {
+		t.Fatalf("errors %d, sender-made %d, loss per minute %d, missing %d", a.CCErrors, a.CCSource, a.CCLastMinute(), a.Missing)
+	}
+	a.Tick()
+	if a.CCLastSecond() == 0 {
+		t.Fatal("last second empty")
+	}
+}
+
+func TestSenderMadeJumpsAreNotLoss(t *testing.T) {
 	m := NewMuxer()
 	a := NewAnalyzer()
-	for i := 0; i < 20; i++ {
-		a.Feed(channel(m))
-	}
-	if a.CCErrors != 0 {
-		t.Fatalf("clean stream counted %d CC errors", a.CCErrors)
-	}
-	drop := 0
+	// The sender skips three video counters, a while in; every datagram
+	// still arrives, and the audio PID steps cleanly across each boundary.
+	n, drop := 0, 0
 	m.SkipCC = func(pid uint16) bool {
-		if pid == 0x65 && drop < 3 {
+		if pid != 0x65 {
+			return false
+		}
+		n++
+		if n > 300 && n%50 == 0 && drop < 3 {
 			drop++
 			return true
 		}
 		return false
 	}
-	for i := 0; i < 5; i++ {
-		a.Feed(channel(m))
+	for _, d := range datagrams(m, 150) {
+		a.Feed(d)
 	}
-	if a.CCErrors != 3 || a.CCLastMinute() != 3 {
-		t.Fatalf("CC errors %d (last minute %d), want 3", a.CCErrors, a.CCLastMinute())
-	}
-	a.Tick()
-	if a.CCLastSecond() != 3 {
-		t.Fatalf("last second %d", a.CCLastSecond())
+	if drop != 3 || a.CCErrors != 3 || a.CCSource != 3 || a.CCLastMinute() != 0 || a.SourceLastMinute() != 3 {
+		t.Fatalf("dropped %d; errors %d, sender-made %d, loss per minute %d, sender per minute %d", drop, a.CCErrors, a.CCSource, a.CCLastMinute(), a.SourceLastMinute())
 	}
 }
 

@@ -136,8 +136,8 @@ func TestCCErrorsDegrade(t *testing.T) {
 	m := New(DefaultConfig())
 	f := newFeeder(m)
 	f.run(5*time.Second, 100)
-	n := 0
-	f.mux.SkipCC = func(uint16) bool { n++; return n == 50 }
+	// One datagram lost on the way: the muxer made it, nobody received it.
+	f.mux.PES(0x101, 0xe0, make([]byte, 150))
 	f.run(2*time.Second, 100)
 	r := f.row(t)
 	if r.Status != Degraded || r.Errors != "1 /min" || !strings.Contains(r.Reason, "1 CC errors") {
@@ -147,6 +147,21 @@ func TestCCErrorsDegrade(t *testing.T) {
 	f.run(62*time.Second, 100)
 	if r := f.row(t); r.Status != Receiving {
 		t.Fatalf("after a clean minute: %s %q", r.Status, r.Reason)
+	}
+}
+
+func TestSenderMadeErrorsDoNotDegrade(t *testing.T) {
+	m := New(DefaultConfig())
+	f := newFeeder(m)
+	f.run(5*time.Second, 100)
+	// The 52nd packet is mid-datagram: the jump sits between two packets
+	// that arrived together, so the sender made it.
+	n := 0
+	f.mux.SkipCC = func(uint16) bool { n++; return n == 52 }
+	f.run(2*time.Second, 100)
+	r := f.row(t)
+	if r.Status != Receiving || r.Errors != "0" || r.SourceErrors != 1 || r.ErrLevel != "src" {
+		t.Fatalf("row %s %q source %d level %s", r.Status, r.Errors, r.SourceErrors, r.ErrLevel)
 	}
 }
 

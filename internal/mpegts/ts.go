@@ -42,6 +42,7 @@ type PID struct {
 	Packets    uint64
 	CCErrors   uint64 // every continuity error, as TR 101 290 counts them
 	CCQuirks   uint64 // of which: the counter advanced on a packet with no payload
+	CCSource   uint64 // of which: jumps made by the sender, the stream being whole
 	Scrambled  bool
 	Kind       string // "PAT", "PMT", "H.264 video" ...
 	Lang       string
@@ -51,6 +52,7 @@ type PID struct {
 
 	lastCC   int8 // -1 until seen
 	dupSeen  bool
+	lastDg   uint64    // datagram the PID was last seen in
 	window   [5]uint32 // packets in each of the last five whole seconds
 	thisSec  uint32
 	section  []byte // PSI section being reassembled
@@ -88,6 +90,7 @@ type Analyzer struct {
 	SyncErrors   uint64
 	CCErrors     uint64 // every continuity error, as TR 101 290 counts them
 	CCQuirks     uint64 // of which: encoder quirks, nothing missing
+	CCSource     uint64 // of which: jumps the sender made, nothing lost on the way
 	Missing      uint64 // TS packets the counter jumps say never arrived
 	TEIErrors    uint64 // packets the modulator marked uncorrectable
 	ccThisSecond uint64
@@ -95,6 +98,24 @@ type Analyzer struct {
 	ccIdx        int
 	qThisSecond  uint64
 	qWindow      [60]uint32 // quirks per second, last minute
+	sThisSecond  uint64
+	sWindow      [60]uint32 // sender-made jumps per second, last minute
+
+	// Telling loss on the way from jumps the sender made. A datagram is lost
+	// or delivered whole, so every PID with packets in a lost datagram jumps
+	// at the same point. When some other PID steps cleanly from the
+	// previous datagram into this one, nothing went missing in between, and
+	// a jump on any PID there was made by the sender.
+	dg      uint64      // datagrams fed so far
+	clean   bool        // the boundary into this datagram is proven whole
+	unclean [1024]bool  // per recent datagram: boundary into it not proven
+	pending []pendingCC // jumps in this datagram, classified at its end
+}
+
+type pendingCC struct {
+	p       *PID
+	missing int
+	since   uint64 // the datagram the PID was last seen in before the jump
 }
 
 func NewAnalyzer() *Analyzer {
@@ -109,6 +130,9 @@ func NewAnalyzer() *Analyzer {
 // Feed takes the payload of one datagram: a run of 188-byte packets. A tail
 // that is not a whole packet is counted as a sync error and dropped.
 func (a *Analyzer) Feed(b []byte) {
+	a.dg++
+	a.clean = false
+	a.pending = a.pending[:0]
 	for len(b) >= PacketSize {
 		if b[0] != SyncByte {
 			a.SyncErrors++
@@ -127,6 +151,28 @@ func (a *Analyzer) Feed(b []byte) {
 	if len(b) > 0 {
 		a.SyncErrors++
 	}
+	a.unclean[a.dg%uint64(len(a.unclean))] = !a.clean
+	for _, e := range a.pending {
+		if a.wholeSince(e.since) {
+			a.sourceError(e.p)
+		} else {
+			a.ccError(e.p, e.missing)
+		}
+	}
+}
+
+// wholeSince reports whether every datagram boundary after datagram since,
+// up to and including the current one, is proven whole.
+func (a *Analyzer) wholeSince(since uint64) bool {
+	if a.dg-since >= uint64(len(a.unclean)) {
+		return false
+	}
+	for k := since + 1; k <= a.dg; k++ {
+		if a.unclean[k%uint64(len(a.unclean))] {
+			return false
+		}
+	}
+	return true
 }
 
 // Tick closes a one-second interval: per-PID rates and the CC error history
@@ -142,6 +188,19 @@ func (a *Analyzer) Tick() {
 	a.ccThisSecond = 0
 	a.qWindow[a.ccIdx] = uint32(a.qThisSecond)
 	a.qThisSecond = 0
+	a.sWindow[a.ccIdx] = uint32(a.sThisSecond)
+	a.sThisSecond = 0
+}
+
+// SourceLastMinute counts, over the last 60 seconds, continuity jumps made by
+// the sender: the stream around them arrived whole, so nothing was lost on
+// the network, but the sender skipped or repeated packets.
+func (a *Analyzer) SourceLastMinute() uint64 {
+	n := a.sThisSecond
+	for _, c := range a.sWindow {
+		n += uint64(c)
+	}
+	return n
 }
 
 // QuirksLastMinute counts, over the last 60 seconds, continuity errors that
@@ -235,6 +294,8 @@ func (a *Analyzer) packet(b []byte) {
 	// repeat of the previous value is a legal duplicate; the null PID is
 	// not counted at all.
 	if pidN != NullPID {
+		first := p.lastDg != a.dg // first packet of this PID in the datagram
+		jump := -1                // packets skipped, when the counter jumps
 		switch {
 		case p.lastCC < 0 || discontinuity:
 		case !hasPayload:
@@ -243,20 +304,29 @@ func (a *Analyzer) packet(b []byte) {
 			case (p.lastCC + 1) & 0x0f:
 				a.ccQuirk(p)
 			default:
-				a.ccError(p, int((cc-p.lastCC-1)&0x0f))
+				jump = int((cc - p.lastCC - 1) & 0x0f)
 			}
 		case cc == p.lastCC:
 			if p.dupSeen {
-				a.ccError(p, 0)
+				jump = 0
 			}
 			p.dupSeen = true
 		case cc != (p.lastCC+1)&0x0f:
-			a.ccError(p, int((cc-p.lastCC-1)&0x0f))
+			jump = int((cc - p.lastCC - 1) & 0x0f)
 			p.dupSeen = false
 		default:
 			p.dupSeen = false
 		}
+		// A PID stepping cleanly out of the previous datagram proves the
+		// boundary between them whole.
+		if first && jump < 0 && p.lastCC >= 0 && p.lastDg == a.dg-1 {
+			a.clean = true
+		}
+		if jump >= 0 {
+			a.pending = append(a.pending, pendingCC{p: p, missing: jump, since: p.lastDg})
+		}
 		p.lastCC = cc
+		p.lastDg = a.dg
 	}
 
 	if !hasPayload || scr != 0 {
@@ -282,6 +352,14 @@ func (a *Analyzer) ccError(p *PID, missing int) {
 	a.CCErrors++
 	a.Missing += uint64(missing)
 	a.ccThisSecond++
+}
+
+func (a *Analyzer) sourceError(p *PID) {
+	p.CCErrors++
+	p.CCSource++
+	a.CCErrors++
+	a.CCSource++
+	a.sThisSecond++
 }
 
 func (a *Analyzer) ccQuirk(p *PID) {

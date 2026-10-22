@@ -409,7 +409,7 @@ function rowHTML(r) {
 <td class="num m">${fmtNum(r.pps)}</td>
 <td class="num m">${r.avgSize ? r.avgSize.toLocaleString() + " B" : "-"}</td>
 <td class="num m">${jit}</td>
-<td class="m e-${r.errLevel}">${esc(r.errors)}</td>
+<td class="m e-${r.errLevel}">${esc(r.errors)}${r.sourceErrors ? ` <span class="srcerr" title="Continuity errors made by the sender in the last minute: every datagram arrived, so nothing was lost on the network">+${r.sourceErrors} at sender</span>` : ""}</td>
 <td><span class="st st-${r.statusLevel}"${title}>${esc(r.status)}</span></td>
 </tr>`;
 }

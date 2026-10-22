@@ -110,6 +110,12 @@ func (t *tsDec) tick(_ *Stream, now time.Time) {
 
 func (t *tsDec) name(*Stream) string { return t.a.ServiceName() }
 
+// sourceErrorsLastMinute counts continuity errors the sender made, quirks
+// included: errors in the stream, but not loss on the network.
+func (t *tsDec) sourceErrorsLastMinute() uint64 {
+	return t.a.SourceLastMinute() + t.a.QuirksLastMinute()
+}
+
 func (t *tsDec) errorsLastMinute() (uint64, string) {
 	if d := t.dupWin.minute(); d > 0 {
 		return t.a.CCLastMinute() + d, "CC errors / duplicated datagrams"
@@ -138,8 +144,11 @@ func (t *tsDec) describe(s *Stream, d *Detail) {
 	if t.haveDF {
 		d.add("MDI (DF : MLR)", fmt.Sprintf("%.1f ms : %d", t.df, t.a.CCLastSecond()))
 	}
-	loss := t.a.CCErrors - t.a.CCQuirks
-	d.add("CC errors (loss)", fmt.Sprintf("%d in the last minute · %d total · at least %d TS packets missing", t.a.CCLastMinute(), loss, t.a.Missing))
+	loss := t.a.CCErrors - t.a.CCQuirks - t.a.CCSource
+	d.add("CC errors (lost on the way)", fmt.Sprintf("%d in the last minute · %d total · at least %d TS packets missing", t.a.CCLastMinute(), loss, t.a.Missing))
+	if t.a.CCSource > 0 {
+		d.add("CC errors (made by the sender)", fmt.Sprintf("%d in the last minute · %d total: the counter jumped but every datagram arrived, so the encoder skipped or repeated packets itself; nothing was lost on the network", t.a.SourceLastMinute(), t.a.CCSource))
+	}
 	if t.a.CCQuirks > 0 {
 		d.add("CC quirks (no loss)", fmt.Sprintf("%d in the last minute · %d total: the encoder advances the counter on PCR-only packets; decoders ignore it", t.a.QuirksLastMinute(), t.a.CCQuirks))
 	}
@@ -153,7 +162,7 @@ func (t *tsDec) describe(s *Stream, d *Detail) {
 		d.add("Transport errors (TEI)", fmt.Sprint(t.a.TEIErrors))
 	}
 
-	tb := Table{Title: "PIDs in the transport stream", Cols: []string{"PID", "Content", "Program", "Rate", "CC errors (loss)", "CC quirks"}}
+	tb := Table{Title: "PIDs in the transport stream", Cols: []string{"PID", "Content", "Program", "Rate", "CC lost on the way", "CC made by sender"}}
 	var scrambled []string
 	for _, p := range t.a.PIDs() {
 		kind := p.Kind
@@ -170,7 +179,7 @@ func (t *tsDec) describe(s *Stream, d *Detail) {
 			kind += " · scrambled"
 			scrambled = append(scrambled, fmt.Sprintf("0x%04X", p.PID))
 		}
-		prog, cc, q := "", fmt.Sprint(p.CCErrors-p.CCQuirks), fmt.Sprint(p.CCQuirks)
+		prog, cc, q := "", fmt.Sprint(p.CCErrors-p.CCQuirks-p.CCSource), fmt.Sprint(p.CCQuirks+p.CCSource)
 		if p.Program != 0 {
 			prog = fmt.Sprint(p.Program)
 		}
@@ -355,6 +364,13 @@ func (r *rtpDec) name(s *Stream) string {
 		return r.ts.name(s)
 	}
 	return r.sdpName
+}
+
+func (r *rtpDec) sourceErrorsLastMinute() uint64 {
+	if r.ts != nil {
+		return r.ts.sourceErrorsLastMinute()
+	}
+	return 0
 }
 
 func (r *rtpDec) errorsLastMinute() (uint64, string) {
