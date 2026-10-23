@@ -110,6 +110,8 @@ type Analyzer struct {
 	clean   bool        // the boundary into this datagram is proven whole
 	unclean [1024]bool  // per recent datagram: boundary into it not proven
 	pending []pendingCC // jumps in this datagram, classified at its end
+
+	grab *grab // a key picture being collected for a thumbnail
 }
 
 type pendingCC struct {
@@ -331,6 +333,9 @@ func (a *Analyzer) packet(b []byte) {
 
 	if !hasPayload || scr != 0 {
 		return
+	}
+	if a.grab != nil && pidN == a.grab.pid {
+		a.grab.packet(payload, pusi)
 	}
 	switch {
 	case pidN == patPID, pidN == sdtPID, p.Kind == "PMT":

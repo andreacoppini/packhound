@@ -67,6 +67,21 @@ jobs:
 
       # The virtual appliance: Debian with Packhound as a service, as an OVA
       # (VMware, VirtualBox), a qcow2 (Proxmox, KVM) and a VHDX (Hyper-V).
+      # The mosaic's decoder: a small static ffmpeg, built once per version
+      # of the script.
+      - name: Cache ffmpeg
+        id: ffmpeg
+        uses: actions/cache@v4
+        with:
+          path: ffmpeg-out
+          key: ffmpeg-${{ hashFiles('scripts/build-ffmpeg.sh') }}
+      - name: Build ffmpeg
+        if: steps.ffmpeg.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq nasm
+          scripts/build-ffmpeg.sh ffmpeg-out
+
       - name: Build the virtual appliance
         run: |
           set -euo pipefail
@@ -74,7 +89,7 @@ jobs:
           VERSION="${TAG#v}"
           sudo apt-get update -qq
           sudo apt-get install -y -qq mmdebstrap debian-archive-keyring qemu-utils parted e2fsprogs
-          sudo appliance/build.sh dist/packhound-linux-amd64 "$VERSION" appliance-out
+          sudo appliance/build.sh dist/packhound-linux-amd64 "$VERSION" appliance-out ffmpeg-out
           sudo chown -R "$(id -u)" appliance-out
           mv "appliance-out/packhound-$VERSION.ova" "dist/packhound-appliance-$VERSION.ova"
           mv "appliance-out/packhound-$VERSION.qcow2" "dist/packhound-appliance-$VERSION.qcow2"

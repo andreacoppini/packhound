@@ -43,6 +43,8 @@ type console struct {
 	// Set when the console is the background service's: changes are saved,
 	// and the page is told what else it may offer.
 	svc *service
+
+	mosaic *mosaic
 }
 
 func runConsole(opt options) error {
@@ -100,6 +102,17 @@ func (c *console) routes(mux *http.ServeMux) error {
 	mux.HandleFunc("/api/recording", c.handleRecording)
 	mux.HandleFunc("/api/vlc", c.handleVLC)
 	mux.HandleFunc("/api/playlist", c.handlePlaylist)
+	if c.mosaic == nil {
+		c.mosaic = newMosaic(c.eng.mon)
+	}
+	mux.HandleFunc("/mosaic", func(w http.ResponseWriter, r *http.Request) {
+		b, _ := webAssets.ReadFile("web/mosaic.html")
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Write(b)
+	})
+	mosaicAPI := func(w http.ResponseWriter, r *http.Request) { c.mosaic.serve(w, r, "/api/mosaic", "") }
+	mux.HandleFunc("/api/mosaic", mosaicAPI)
+	mux.HandleFunc("/api/mosaic/", mosaicAPI)
 	return nil
 }
 

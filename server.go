@@ -272,7 +272,7 @@ func (s *service) startSNMP() error {
 
 // open are the paths that work without logging in: the login page itself
 // and what it needs.
-var open = map[string]bool{"/login.html": true, "/style.css": true, "/icon.svg": true, "/login.js": true, "/auth/login": true}
+var open = map[string]bool{"/login.html": true, "/style.css": true, "/icon.svg": true, "/login.js": true, "/auth/login": true, "/mosaic.js": true}
 
 func (s *service) guard(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -292,7 +292,9 @@ func (s *service) guard(h http.Handler) http.Handler {
 			http.Error(w, "an API token is needed: Authorization: Bearer <token>, or ?token=<token>", http.StatusUnauthorized)
 			return
 		}
-		if open[r.URL.Path] {
+		// The mosaic is read-only, so the API token opens it too: a wall
+		// screen can show /mosaic?token=... without logging in.
+		if open[r.URL.Path] || r.URL.Path == "/mosaic" && s.tokenOK(r) {
 			h.ServeHTTP(w, r)
 			return
 		}

@@ -2,7 +2,9 @@
 # Builds the Packhound virtual appliance: a minimal Debian with Packhound as
 # a service, in the formats hypervisors import.
 #
-#   sudo appliance/build.sh <packhound-linux-amd64 binary> <version> <output dir>
+#   sudo appliance/build.sh <packhound-linux-amd64 binary> <version> <output dir> [ffmpeg dir]
+#
+# The ffmpeg dir, from scripts/build-ffmpeg.sh, gives the mosaic its decoder.
 #
 # Produces, in the output dir:
 #   packhound-<version>.ova          VMware ESXi / Workstation / Fusion, VirtualBox
@@ -16,6 +18,7 @@ set -euo pipefail
 BIN=$(realpath "$1")
 VERSION=$2
 OUT=$(realpath -m "$3")
+FFMPEG_DIR=${4:+$(realpath "$4")}
 SUITE=${SUITE:-trixie}
 MIRROR=${MIRROR:-http://deb.debian.org/debian}
 SIZE=${SIZE:-8G}
@@ -67,6 +70,12 @@ mmdebstrap --variant=minbase --components=main \
 
 echo "==> Packhound"
 install -m 0755 "$BIN" "$MNT/usr/local/bin/packhound"
+if [ -n "$FFMPEG_DIR" ]; then
+	install -D -m 0755 "$FFMPEG_DIR/ffmpeg" "$MNT/usr/lib/packhound/ffmpeg"
+	install -D -m 0644 "$FFMPEG_DIR/COPYING.LGPLv2.1" "$MNT/usr/share/doc/packhound/ffmpeg-COPYING.LGPLv2.1"
+	echo "FFmpeg 7.1.1, LGPL 2.1, built by scripts/build-ffmpeg.sh from https://ffmpeg.org/releases/ffmpeg-7.1.1.tar.xz" \
+		> "$MNT/usr/share/doc/packhound/ffmpeg-SOURCE"
+fi
 cp -a "$HERE/rootfs/." "$MNT/"
 echo "$VERSION" > "$MNT/etc/packhound/version"
 

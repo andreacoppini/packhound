@@ -5,6 +5,7 @@ import (
 	"math"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -354,6 +355,14 @@ func (s *service) handleAPI(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusNotFound)
 		fmt.Fprintf(w, "{\"error\":\"no stream %q\"}\n", id)
+	case path == "mosaic" || strings.HasPrefix(path, "mosaic/"):
+		// Image URLs carry the token when the request did, so that a client
+		// that can only fetch a URL can fetch them.
+		tok := ""
+		if t := q.Get("token"); t != "" {
+			tok = "&token=" + url.QueryEscape(t)
+		}
+		s.con.mosaic.serve(w, r, "/api/v1/mosaic", tok)
 	case path == "alerts":
 		snap := s.eng.mon.Snapshot("", 60)
 		alerts := snap.Alerts

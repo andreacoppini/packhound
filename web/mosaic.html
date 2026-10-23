@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Packhound mosaic</title>
+<link rel="stylesheet" href="style.css">
+<link rel="icon" type="image/svg+xml" href="icon.svg">
+</head>
+<body class="mosaicpage">
+<header>
+  <div class="brand"><img src="icon.svg" alt="" width="20" height="20">Packhound <span>mosaic</span></div>
+  <span class="mcount" id="count"></span>
+  <input type="search" id="filter" placeholder="Filter by name or group" aria-label="Filter">
+  <label class="mtoggle"><input type="checkbox" id="problems"> Problems only</label>
+  <span class="segbtns" id="size" title="Tile size"><button data-size="200">S</button><button data-size="280" class="on">M</button><button data-size="380">L</button></span>
+  <button id="full" title="Full screen">Full screen</button>
+  <span class="mnote" id="note" hidden></span>
+</header>
+<main class="mosaic" id="grid" aria-live="off"></main>
+<div class="mempty" id="empty" hidden></div>
+<script src="mosaic.js"></script>
+</body>
+</html>

@@ -135,6 +135,28 @@ with the default route.
 IPv6 streams are on their own tab, so the table you care about is not buried
 under neighbour discovery.
 
+### Mosaic
+
+**Mosaic** in the header opens, in a new tab, a still of every MPEG-TS
+channel, taken about every 10 seconds. Each tile shows the channel's name and
+group, its state (a red border and "No signal" when it stops, amber when it
+degrades), its errors in the last minute, how old the picture is, and a
+speaker: green while audio is arriving, red with a cross when the channel has
+audio but none is arriving. The speaker says the audio is there, not that it
+is not silent. Scrambled channels say so instead of showing a picture.
+
+A still is the next key picture on the channel, copied out of the stream
+Packhound already receives, so the mosaic joins nothing extra. ffmpeg decodes
+it to a small JPEG, one picture at a time, using at most a quarter of one
+core: with more channels than that allows in 10 seconds, a round of stills
+simply takes longer. Stills are taken only while someone has the mosaic open
+or an API client is reading it, and for 5 minutes after.
+
+The appliance includes a small ffmpeg (H.264, HEVC and MPEG-2 only). On
+Windows, macOS and Linux, Packhound uses an `ffmpeg` beside it or on the PATH,
+or the one named in `PACKHOUND_FFMPEG`; without one, the mosaic shows each
+channel's state and audio, but no pictures.
+
 ### Alerts
 
 A video or audio stream raises an alert when it stops, when it degrades, when
@@ -273,6 +295,8 @@ GET /api/v1/summary                      counts and totals
 GET /api/v1/streams                      every stream; filter with ?kind=video, ?status=Degraded, ?family=4
 GET /api/v1/streams/239.192.1.1:1234     one stream, with its PIDs, services and senders
 GET /api/v1/alerts?since=2026-10-22T08:00:00Z
+GET /api/v1/mosaic                       every MPEG-TS channel, with its latest still
+GET /api/v1/mosaic/239.3.1.1:5701.jpg    a channel's still (320 pixels wide, JPEG)
 GET /metrics                             the same numbers for Prometheus
 ```
 
@@ -282,6 +306,18 @@ Each stream has `group`, `name`, `kind`, `type`, `sender`, `status` (and
 `lastSeen` and `snmpIndex`. Field names are kept stable: new ones are added,
 existing ones are never renamed.
 
+Each mosaic channel has `id` (its group and port), `name`, `status`,
+`errorsLastMinute`, `video`, `scrambled`, `hasAudio`, `audio` (audio is
+arriving), `shotAt` (when the still was taken), `problem` (why there is no
+recent still) and `image`, the still's URL. The URL changes with each new
+still and carries the token when the request did, so a client that can only
+fetch URLs (a monitoring dashboard, a status display) can show it as it is.
+Stills also answer `If-None-Match` with 304.
+
+The mosaic page itself opens with the token as well, without logging in, for
+a wall screen: `https://<appliance>/mosaic?token=<token>`. The token opens
+only the mosaic and the read-only API, never the console.
+
 ### Building the image
 
 `appliance/build.sh` builds it on any Debian or Ubuntu machine with
@@ -290,6 +326,13 @@ existing ones are never renamed.
 ```
 CGO_ENABLED=0 GOOS=linux go build -o packhound-linux-amd64 .
 sudo appliance/build.sh packhound-linux-amd64 1.0.0 out/
+```
+
+To include the mosaic's decoder, build it first and pass its directory:
+
+```
+scripts/build-ffmpeg.sh ffmpeg-out/
+sudo appliance/build.sh packhound-linux-amd64 1.0.0 out/ ffmpeg-out/
 ```
 
 Releases build it in GitHub Actions. It takes about three minutes.
@@ -324,6 +367,19 @@ and is checked on every push, but has not yet been run against real hardware;
 join mode works the same on all three.
 
 ## Changelog
+
+What's new in 1.2.0 (2026-10-23):
+
+```
+*) Mosaic: a page, opened from the console's header in a new tab, with a
+   still of every MPEG-TS channel about every 10 seconds, its state, its
+   errors and whether audio is arriving. Stills are H.264, HEVC or MPEG-2
+   key pictures decoded by ffmpeg, which the appliance now includes.
+
+*) REST API: /api/v1/mosaic lists the channels with their stills, and
+   /api/v1/mosaic/<group:port>.jpg serves each still. The mosaic page
+   opens with the API token, for a wall screen.
+```
 
 What's new in 1.1.1 (2026-10-22):
 
