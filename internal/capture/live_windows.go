@@ -139,7 +139,7 @@ func (n *npcapSource) lastError() string {
 	return windows.BytePtrToString(*(**byte)(unsafe.Pointer(&r)))
 }
 
-func openLive(ifc Interface) (Source, error) {
+func openLive(ifc Interface, filter liveFilter) (Source, error) {
 	if err := loadNpcap(); err != nil {
 		return nil, err
 	}
@@ -154,8 +154,11 @@ func openLive(ifc Interface) (Source, error) {
 	n := &npcapSource{p: p}
 	npcap.setSnaplen.Call(p, 65535)
 	// Without promiscuous mode the adapter's own multicast filter drops the
-	// groups this machine has not joined.
-	npcap.setPromisc.Call(p, 1)
+	// groups this machine has not joined. A mirror sent to this machine
+	// arrives without it.
+	if filter == filterMulticast {
+		npcap.setPromisc.Call(p, 1)
+	}
 	// Not immediate mode: Npcap then hands over packets in batches, which
 	// costs far fewer calls into the driver on a busy port. The driver
 	// stamps each packet, so batching changes no timing. A large kernel
@@ -174,16 +177,9 @@ func openLive(ifc Interface) (Source, error) {
 	r, _, _ := npcap.datalink.Call(p)
 	n.link = int(int32(r))
 	if n.link == 1 {
-		prog, err := bpf.Assemble([]bpf.Instruction{
-			bpf.LoadAbsolute{Off: 0, Size: 1},
-			bpf.JumpIf{Cond: bpf.JumpBitsSet, Val: 1, SkipTrue: 0, SkipFalse: 1},
-			bpf.RetConstant{Val: 1 << 18},
-			bpf.RetConstant{Val: 0},
-		})
-		if err == nil {
-			fp := bpfProgram{Len: uint32(len(prog)), Insns: &prog[0]}
-			npcap.setfilter.Call(p, uintptr(unsafe.Pointer(&fp)))
-		}
+		prog := filter.program()
+		fp := bpfProgram{Len: uint32(len(prog)), Insns: &prog[0]}
+		npcap.setfilter.Call(p, uintptr(unsafe.Pointer(&fp)))
 	}
 	return n, nil
 }

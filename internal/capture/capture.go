@@ -22,6 +22,8 @@ import (
 	"sort"
 	"time"
 
+	"golang.org/x/net/bpf"
+
 	"github.com/andreacoppini/packhound/internal/pkt"
 )
 
@@ -147,4 +149,55 @@ func FindInterface(name string) (Interface, error) {
 func LiveAvailable() (bool, string) { return liveAvailable() }
 
 // OpenLive starts live capture of multicast on ifc.
-func OpenLive(ifc Interface) (Source, error) { return openLive(ifc) }
+func OpenLive(ifc Interface) (Source, error) { return openLive(ifc, filterMulticast) }
+
+// liveFilter is what a capture device passes up from the kernel.
+type liveFilter int
+
+const (
+	// filterMulticast: frames to a group MAC address, the interface in
+	// all-multicast or promiscuous mode so every group arrives.
+	filterMulticast liveFilter = iota
+	// filterGRE: IPv4 GRE, as a switch's ERSPAN mirror arrives, with the
+	// interface in its normal state: the mirror is addressed to this host.
+	filterGRE
+)
+
+// program is the kernel filter for Ethernet frames.
+func (f liveFilter) program() []bpf.RawInstruction {
+	if f == filterGRE {
+		return greOnly
+	}
+	return multicastOnly
+}
+
+func assemble(ins []bpf.Instruction) []bpf.RawInstruction {
+	prog, err := bpf.Assemble(ins)
+	if err != nil {
+		panic(err)
+	}
+	return prog
+}
+
+// multicastOnly passes frames whose destination MAC has the group bit set.
+var multicastOnly = assemble([]bpf.Instruction{
+	bpf.LoadAbsolute{Off: 0, Size: 1},
+	bpf.JumpIf{Cond: bpf.JumpBitsSet, Val: 1, SkipTrue: 0, SkipFalse: 1},
+	bpf.RetConstant{Val: 1 << 18},
+	bpf.RetConstant{Val: 0},
+})
+
+// greOnly passes IPv4 GRE (protocol 47), untagged or behind one 802.1Q tag.
+var greOnly = assemble([]bpf.Instruction{
+	bpf.LoadAbsolute{Off: 12, Size: 2},                                       // 0: EtherType
+	bpf.JumpIf{Cond: bpf.JumpEqual, Val: 0x8100, SkipTrue: 3},                // 1: tagged: to 5
+	bpf.JumpIf{Cond: bpf.JumpEqual, Val: 0x0800, SkipFalse: 7},               // 2: not IPv4: to 10
+	bpf.LoadAbsolute{Off: 23, Size: 1},                                       // 3: IP protocol
+	bpf.Jump{Skip: 3},                                                        // 4: to 8
+	bpf.LoadAbsolute{Off: 16, Size: 2},                                       // 5: the tagged EtherType
+	bpf.JumpIf{Cond: bpf.JumpEqual, Val: 0x0800, SkipFalse: 3},               // 6: not IPv4: to 10
+	bpf.LoadAbsolute{Off: 27, Size: 1},                                       // 7: IP protocol
+	bpf.JumpIf{Cond: bpf.JumpEqual, Val: uint32(pkt.ProtoGRE), SkipFalse: 1}, // 8: not GRE: to 10
+	bpf.RetConstant{Val: 1 << 18},                                            // 9
+	bpf.RetConstant{Val: 0},                                                  // 10
+})

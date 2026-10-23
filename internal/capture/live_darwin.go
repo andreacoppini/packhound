@@ -10,7 +10,6 @@ import (
 	"time"
 	"unsafe"
 
-	"golang.org/x/net/bpf"
 	"golang.org/x/sys/unix"
 )
 
@@ -64,7 +63,7 @@ type bpfDev struct {
 	statAt  time.Time
 }
 
-func openLive(ifc Interface) (Source, error) {
+func openLive(ifc Interface, filter liveFilter) (Source, error) {
 	f, err := openBPF()
 	if err != nil {
 		return nil, err
@@ -90,9 +89,12 @@ func openLive(ifc Interface) (Source, error) {
 	zero := uint32(0)
 	_ = ioctl(fd, unix.BIOCSSEESENT, unsafe.Pointer(&zero)) // only what is received
 	// There is no all-multicast switch for BPF; without promiscuous mode the
-	// NIC drops groups this host has not joined.
-	if err := ioctl(fd, unix.BIOCPROMISC, nil); err != nil {
-		return fail("enabling promiscuous mode on "+ifc.Name, err)
+	// NIC drops groups this host has not joined. A mirror sent to this host
+	// arrives without it.
+	if filter == filterMulticast {
+		if err := ioctl(fd, unix.BIOCPROMISC, nil); err != nil {
+			return fail("enabling promiscuous mode on "+ifc.Name, err)
+		}
 	}
 	tv := unix.Timeval{Usec: 250000}
 	if err := ioctl(fd, unix.BIOCSRTIMEOUT, unsafe.Pointer(&tv)); err != nil {
@@ -102,16 +104,8 @@ func openLive(ifc Interface) (Source, error) {
 	if err := ioctl(fd, unix.BIOCGDLT, unsafe.Pointer(&dlt)); err != nil {
 		return fail("reading the link type", err)
 	}
-	if dlt == 1 { // Ethernet: filter in the kernel on the group bit
-		prog, err := bpf.Assemble([]bpf.Instruction{
-			bpf.LoadAbsolute{Off: 0, Size: 1},
-			bpf.JumpIf{Cond: bpf.JumpBitsSet, Val: 1, SkipTrue: 0, SkipFalse: 1},
-			bpf.RetConstant{Val: 1 << 18},
-			bpf.RetConstant{Val: 0},
-		})
-		if err != nil {
-			return fail("building the filter", err)
-		}
+	if dlt == 1 { // Ethernet: filter in the kernel
+		prog := filter.program()
 		ins := make([]unix.BpfInsn, len(prog))
 		for i, r := range prog {
 			ins[i] = unix.BpfInsn{Code: r.Op, Jt: r.Jt, Jf: r.Jf, K: r.K}

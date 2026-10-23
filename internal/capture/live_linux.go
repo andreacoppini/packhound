@@ -7,7 +7,6 @@ import (
 	"time"
 	"unsafe"
 
-	"golang.org/x/net/bpf"
 	"golang.org/x/sys/unix"
 
 	"github.com/andreacoppini/packhound/internal/pkt"
@@ -34,20 +33,6 @@ func liveAvailable() (bool, string) {
 	return true, ""
 }
 
-// multicastOnly passes frames whose destination MAC has the group bit set.
-var multicastOnly = func() []bpf.RawInstruction {
-	prog, err := bpf.Assemble([]bpf.Instruction{
-		bpf.LoadAbsolute{Off: 0, Size: 1},
-		bpf.JumpIf{Cond: bpf.JumpBitsSet, Val: 1, SkipTrue: 0, SkipFalse: 1},
-		bpf.RetConstant{Val: 1 << 18},
-		bpf.RetConstant{Val: 0},
-	})
-	if err != nil {
-		panic(err)
-	}
-	return prog
-}()
-
 type afPacket struct {
 	fd      int
 	dropped atomic.Uint64
@@ -57,7 +42,7 @@ type afPacket struct {
 	closed  atomic.Bool
 }
 
-func openLive(ifc Interface) (Source, error) {
+func openLive(ifc Interface, filter liveFilter) (Source, error) {
 	fd, err := unix.Socket(unix.AF_PACKET, unix.SOCK_RAW|unix.SOCK_CLOEXEC, int(htons(unix.ETH_P_ALL)))
 	if err != nil {
 		if ok, why := liveAvailable(); !ok {
@@ -73,22 +58,25 @@ func openLive(ifc Interface) (Source, error) {
 	// The filter goes on before the bind, so nothing unfiltered queues up
 	// in between. Loopback frames have no group MAC to filter on; the
 	// decoder's IP check does the job there.
-	if !ifc.Loopback {
-		ins := make([]unix.SockFilter, len(multicastOnly))
-		for i, r := range multicastOnly {
+	if !ifc.Loopback || filter == filterGRE {
+		prog := filter.program()
+		ins := make([]unix.SockFilter, len(prog))
+		for i, r := range prog {
 			ins[i] = unix.SockFilter{Code: r.Op, Jt: r.Jt, Jf: r.Jf, K: r.K}
 		}
 		fprog := unix.SockFprog{Len: uint16(len(ins)), Filter: &ins[0]}
 		if err := unix.SetsockoptSockFprog(fd, unix.SOL_SOCKET, unix.SO_ATTACH_FILTER, &fprog); err != nil {
-			return fail("attaching the multicast filter", err)
+			return fail("attaching the capture filter", err)
 		}
 	}
 	if err := unix.Bind(fd, &unix.SockaddrLinklayer{Protocol: htons(unix.ETH_P_ALL), Ifindex: ifc.Index}); err != nil {
 		return fail("binding to "+ifc.Name, err)
 	}
-	mreq := unix.PacketMreq{Ifindex: int32(ifc.Index), Type: unix.PACKET_MR_ALLMULTI}
-	if err := unix.SetsockoptPacketMreq(fd, unix.SOL_PACKET, unix.PACKET_ADD_MEMBERSHIP, &mreq); err != nil {
-		return fail("enabling all-multicast on "+ifc.Name, err)
+	if filter == filterMulticast {
+		mreq := unix.PacketMreq{Ifindex: int32(ifc.Index), Type: unix.PACKET_MR_ALLMULTI}
+		if err := unix.SetsockoptPacketMreq(fd, unix.SOL_PACKET, unix.PACKET_ADD_MEMBERSHIP, &mreq); err != nil {
+			return fail("enabling all-multicast on "+ifc.Name, err)
+		}
 	}
 	// A big receive buffer rides out the moments the monitor is busy. The
 	// forced variant needs CAP_NET_ADMIN; the plain one is capped by

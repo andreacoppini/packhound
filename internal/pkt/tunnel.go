@@ -135,48 +135,61 @@ func TZSP(b []byte) (frame []byte, ok bool) {
 // given link type carrying GRE (ERSPAN) or TZSP, as a capture taken where
 // a switch's mirror arrives contains. It returns the Ethernet frame inside.
 func Unwrap(link int, frame []byte) ([]byte, bool) {
+	inner, _, _, ok := UnwrapFrame(link, frame)
+	return inner, ok
+}
+
+// UnwrapFrame is Unwrap, also returning the switch that sent the mirror and
+// its ERSPAN session (-1 for none).
+func UnwrapFrame(link int, frame []byte) (inner []byte, src netip.Addr, session int, ok bool) {
 	var ip []byte
 	switch link {
 	case LinkEthernet:
 		if len(frame) < 14 {
-			return nil, false
+			return nil, netip.Addr{}, -1, false
 		}
 		et, b := binary.BigEndian.Uint16(frame[12:]), frame[14:]
 		for (et == 0x8100 || et == 0x88a8 || et == 0x9100) && len(b) >= 4 {
 			et, b = binary.BigEndian.Uint16(b[2:]), b[4:]
 		}
 		if et != 0x0800 {
-			return nil, false
+			return nil, netip.Addr{}, -1, false
 		}
 		ip = b
 	case LinkLinuxSLL:
 		if len(frame) < 16 || binary.BigEndian.Uint16(frame[14:]) != 0x0800 {
-			return nil, false
+			return nil, netip.Addr{}, -1, false
 		}
 		ip = frame[16:]
 	case LinkLinuxSLL2:
 		if len(frame) < 20 || binary.BigEndian.Uint16(frame) != 0x0800 {
-			return nil, false
+			return nil, netip.Addr{}, -1, false
 		}
 		ip = frame[20:]
 	case LinkRaw:
 		ip = frame
+	case LinkNull, LinkLoop: // BSD loopback: a 4-byte address family
+		if len(frame) < 4 || (binary.LittleEndian.Uint32(frame) != 2 && binary.BigEndian.Uint32(frame) != 2) {
+			return nil, netip.Addr{}, -1, false
+		}
+		ip = frame[4:]
 	default:
-		return nil, false
+		return nil, netip.Addr{}, -1, false
 	}
-	proto, _, rest, ok := IPv4Header(ip)
+	proto, src, rest, ok := IPv4Header(ip)
 	if !ok {
-		return nil, false
+		return nil, netip.Addr{}, -1, false
 	}
 	switch proto {
 	case ProtoGRE:
-		inner, _, ok := GRE(rest)
-		return inner, ok
+		inner, session, ok = GRE(rest)
+		return inner, src, session, ok
 	case ProtoUDP:
 		if len(rest) < 8 || binary.BigEndian.Uint16(rest[2:]) != TZSPPort {
-			return nil, false
+			return nil, netip.Addr{}, -1, false
 		}
-		return TZSP(rest[8:])
+		inner, ok = TZSP(rest[8:])
+		return inner, src, -1, ok
 	}
-	return nil, false
+	return nil, netip.Addr{}, -1, false
 }

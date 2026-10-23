@@ -156,7 +156,7 @@ function remoteHelp() {
   const ip = ((ifc && ifc.addrs) || []).find((a) => /^\d+\.\d+\.\d+\.\d+$/.test(a)) || "<this machine>";
   $("remoteWhere").textContent = tzsp
     ? `Point the switch at ${ip}, UDP port 37008.`
-    : `Point the switch's ERSPAN session at ${ip}. Receiving GRE needs Packhound to run as root (administrator on Windows); the appliance does.`;
+    : `Point the switch's ERSPAN session at ${ip}. Packhound receives it as root, or else through this interface's capture device, with the same access Capture everything needs.`;
   $("remoteHelp").textContent = tzsp
     ? `MikroTik RouterOS (the packet sniffer streams TZSP):
 /tool sniffer set streaming-enabled=yes streaming-server=${ip} \\
@@ -192,7 +192,7 @@ set forwarding-options analyzer ph input ingress interface ge-0/0/1.0
 set forwarding-options analyzer ph output ip-address ${ip}
 
 Ruckus ICX (FastIron with ERSPAN):
-monitor-profile 1 type ERSPAN
+monitor-profile 1 type erspan
  source-ip <switch IP>
  destination-ip ${ip}
 interface ethernet 1/1/1
@@ -470,10 +470,12 @@ function mirrorText(m, since) {
   ui.mirrorPrev = { t: now, frames: m.frames };
   if (!m.frames) {
     const ignored = m.ignored ? ` (${m.ignored.toLocaleString()} ignored: another switch or session, or unreadable)` : "";
-    return `Waiting for ${proto} at ${m.listen} · ${fmtDur(since)}${ignored}`;
+    const via = m.via && !/socket$/.test(m.via) ? ` via ${m.via}` : "";
+    return `Waiting for ${proto} at ${m.listen}${via} · ${fmtDur(since)}${ignored}`;
   }
   const session = m.session >= 0 ? `, session ${m.session}` : "";
-  return `Mirror from ${m.from}${session} · ${proto} · ${Math.round(ui.mirrorRate || 0).toLocaleString()} frames/s · ${fmtDur(since)}`;
+  const via = m.via && !/socket$/.test(m.via) ? ` via ${m.via}` : "";
+  return `Mirror from ${m.from}${session} · ${proto}${via} · ${Math.round(ui.mirrorRate || 0).toLocaleString()} frames/s · ${fmtDur(since)}`;
 }
 
 function isLinkLocal(r) {

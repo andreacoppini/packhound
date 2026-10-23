@@ -141,7 +141,7 @@ func (e *engine) start(req startRequest) error {
 		if cfg.Proto == capture.RemoteTZSP {
 			what = "TZSP (UDP 37008)"
 		}
-		e.mon.Logf("Receiving mirrored traffic, %s, at %s", what, st.Listen)
+		e.mon.Logf("Receiving mirrored traffic, %s, at %s, through %s", what, st.Listen, st.Via)
 	case modeDemo:
 		src = demoSource{demo.New()}
 		e.mon.Logf("Demo traffic: nothing here is real")
@@ -370,7 +370,7 @@ func (e *engine) stopRecording() {
 // received at the interface's IPv4 address (Windows needs one), or at any
 // address when it has none.
 func remoteConfig(req startRequest, ifc capture.Interface) (capture.RemoteConfig, error) {
-	cfg := capture.RemoteConfig{Proto: req.Remote, Session: -1}
+	cfg := capture.RemoteConfig{Proto: req.Remote, Session: -1, Interface: ifc}
 	if cfg.Proto == "" {
 		cfg.Proto = capture.RemoteERSPAN
 	}

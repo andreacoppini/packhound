@@ -10,6 +10,6 @@ func liveAvailable() (bool, string) {
 	return false, "live capture is not supported on this platform; join groups instead"
 }
 
-func openLive(Interface) (Source, error) {
+func openLive(Interface, liveFilter) (Source, error) {
 	return nil, errors.New("live capture is not supported on this platform")
 }

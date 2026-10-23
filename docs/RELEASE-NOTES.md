@@ -1,3 +1,5 @@
+**Packhound 1.3.1** makes ERSPAN work without root: when a raw socket is not allowed, the mirror is received through the interface's capture device, with the same access *Capture everything* uses (Wireshark's ChmodBPF on macOS, Npcap on Windows, `setcap cap_net_raw` on Linux). The status line says which way it arrives. The Ruckus ICX example now uses `monitor-profile 1 type erspan` in lower case, as FastIron requires. 1.3.0's notes follow.
+
 **Packhound 1.3.0: capture files and remote switches.**
 
 - **Open a capture file:** **Open capture…** analyses a `.pcap` or `.pcapng` from Wireshark or tcpdump in a view of its own, while live monitoring (and on the appliance, SNMP and the REST API) carries on. The result is the state of things when the capture ended: rates averaged over the capture, errors totalled, alerts as a timeline in the capture's own times, and a mosaic still of each channel taken from the file. Captures of a switch's mirror are unwrapped. From the command line: `packhound -read site.pcapng -out streams.json`.

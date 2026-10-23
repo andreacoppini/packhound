@@ -225,7 +225,7 @@ switch sends:
 
 | Switch | Sends | Packhound needs |
 |---|---|---|
-| Cisco, Arista, Juniper, Aruba, Ruckus ICX | ERSPAN (GRE): Types I, II and III, or plain GRE bridging | root (administrator on Windows): GRE only reaches raw sockets. The appliance runs as root. |
+| Cisco, Arista, Juniper, Aruba, Ruckus ICX | ERSPAN (GRE): Types I, II and III, or plain GRE bridging | root (administrator on Windows), or else the same access as *Capture everything*: Wireshark's ChmodBPF on macOS, Npcap on Windows, `setcap cap_net_raw` on Linux. The appliance runs as root. |
 | MikroTik | TZSP, to UDP port 37008 (the packet sniffer's streaming) | nothing |
 
 Optionally, take the mirror only from one switch's address, or one ERSPAN
@@ -445,6 +445,18 @@ and is checked on every push, but has not yet been run against real hardware;
 join mode works the same on all three.
 
 ## Changelog
+
+What's new in 1.3.1 (2026-10-23):
+
+```
+*) Remote switches: ERSPAN no longer needs root. Without it, Packhound
+   receives the mirror through the interface's capture device, with the
+   same access Capture everything uses (ChmodBPF on macOS, Npcap on
+   Windows, setcap on Linux). The status line says which way it arrives.
+
+*) The Ruckus ICX example uses "type erspan" in lower case, as FastIron
+   requires.
+```
 
 What's new in 1.3.0 (2026-10-23):
 

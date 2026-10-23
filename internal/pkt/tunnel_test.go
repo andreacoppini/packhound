@@ -107,9 +107,14 @@ func TestUnwrap(t *testing.T) {
 	gre = append(gre, inner...)
 	ip := []byte{0x45, 0, 0, 0, 0, 0, 0x40, 0, 64, ProtoGRE, 0, 0, 192, 0, 2, 9, 10, 0, 0, 1}
 	outer := append([]byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 0x08, 0x00}, append(ip, gre...)...)
-	got, ok := Unwrap(LinkEthernet, outer)
-	if !ok || !bytes.Equal(got, inner) {
-		t.Fatalf("ok %v, %d bytes", ok, len(got))
+	got, src, session, ok := UnwrapFrame(LinkEthernet, outer)
+	if !ok || !bytes.Equal(got, inner) || src.String() != "192.0.2.9" || session != 1 {
+		t.Fatalf("ok %v, %d bytes, from %s, session %d", ok, len(got), src, session)
+	}
+	// The same on a BSD loopback, as macOS captures lo0.
+	bsd := append([]byte{2, 0, 0, 0}, outer[14:]...)
+	if got, ok := Unwrap(LinkNull, bsd); !ok || !bytes.Equal(got, inner) {
+		t.Errorf("BSD loopback: ok %v, %d bytes", ok, len(got))
 	}
 	udp := []byte{0x13, 0x88, 0x90, 0x90, 0, 0, 0, 0} // to port 37008
 	tz := append(append(udp, 1, 0, 0, 1, 1), inner...)
