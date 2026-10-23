@@ -1,3 +1,5 @@
+**Packhound 1.2.1** fixes the mosaic for channels whose encoders send open GOPs: their key pictures are I-frames marked as recovery points rather than IDR frames, and 1.2.0 could not decode them. Radio channels are now labelled as radio rather than "no video". 1.2.0's notes follow.
+
 **Packhound 1.2.0: the mosaic.**
 
 - **Mosaic:** a page, opened from **Mosaic** in the console's header in a new tab, with a still of every MPEG-TS channel about every 10 seconds. Each tile shows the channel's name, its state, its errors, how old the picture is, and a speaker: green while audio is arriving, red when the channel has audio but none is arriving. Scrambled channels and channels that stop are marked as such.

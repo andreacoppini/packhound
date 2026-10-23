@@ -78,7 +78,7 @@ func TestGrabDecodes(t *testing.T) {
 		}
 		t0 := time.Now()
 		cmd := exec.Command("ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-threads", "1",
-			"-f", codec, "-i", "pipe:0", "-frames:v", "1", "-vf", "scale=320:-2", "-q:v", "5", "-f", "image2pipe", "-c:v", "mjpeg", "pipe:1")
+			"-skip_frame", "nointra", "-flags2", "showall", "-f", codec, "-i", "pipe:0", "-frames:v", "1", "-vf", "scale=320:-2", "-q:v", "5", "-f", "image2pipe", "-c:v", "mjpeg", "pipe:1")
 		cmd.Stdin = bytes.NewReader(es)
 		out, err := cmd.Output()
 		if err != nil || len(out) < 2 || out[0] != 0xff || out[1] != 0xd8 {

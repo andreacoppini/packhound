@@ -190,8 +190,12 @@ func (m *mosaic) step(now time.Time) {
 		sh := m.shots[c.Key]
 		switch {
 		case c.Codec == "":
-			sh.problem = "no video this decoder reads"
-			if c.Video == "" {
+			switch {
+			case c.Video != "":
+				sh.problem = "no video this decoder reads"
+			case c.HasAudio:
+				sh.problem = "Radio: audio only"
+			default:
 				sh.problem = "no video"
 			}
 			if c.Scrambled {
@@ -249,8 +253,12 @@ func (m *mosaic) decoder() {
 func (m *mosaic) decode(j decodeJob) ([]byte, time.Duration, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	// Scale to the display aspect, so anamorphic SD comes out 16:9.
+	// Only intra pictures are decoded, and shown even when they are not IDR:
+	// many encoders send open GOPs, whose key pictures are I-frames marked as
+	// recovery points, which ffmpeg otherwise holds back. Scale to the
+	// display aspect, so anamorphic SD comes out 16:9.
 	cmd := exec.CommandContext(ctx, m.ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-threads", "1",
+		"-skip_frame", "nointra", "-flags2", "showall",
 		"-f", j.codec, "-i", "pipe:0", "-frames:v", "1",
 		"-vf", fmt.Sprintf("scale=%d:trunc(ow/dar/2)*2", thumbWidth),
 		"-q:v", "5", "-f", "image2pipe", "-c:v", "mjpeg", "pipe:1")

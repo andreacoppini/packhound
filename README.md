@@ -368,6 +368,14 @@ join mode works the same on all three.
 
 ## Changelog
 
+What's new in 1.2.1 (2026-10-23):
+
+```
+*) Mosaic: pictures from channels whose encoders send open GOPs (key
+   pictures that are I-frames marked as recovery points, not IDR frames),
+   which 1.2.0 could not decode. Radio channels are labelled as such.
+```
+
 What's new in 1.2.0 (2026-10-23):
 
 ```
