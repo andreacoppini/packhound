@@ -2,7 +2,7 @@
 
 // The mosaic: a still of every transport stream, with its state, whether
 // audio is arriving, and how old the picture is. The list is polled every
-// two seconds; an image is fetched only when its URL changes, which is when
+// five seconds; an image is fetched only when its URL changes, which is when
 // a new still has been taken.
 
 const $ = (id) => document.getElementById(id);
@@ -106,6 +106,8 @@ function draw() {
     if (!keep.has(id)) el.remove();
     if (!last.channels.some((c) => c.id === id)) tiles.delete(id);
   }
+  for (const b of $("refresh").querySelectorAll("button")) b.classList.toggle("on", +b.dataset.s === last.interval);
+  $("refreshBox").hidden = !!token || !last.decoder;
   $("count").textContent = last.channels.length + " channels" + (problems ? " · " + problems + " with problems" : "");
   $("note").hidden = !last.note;
   $("note").textContent = last.note || "";
@@ -129,10 +131,21 @@ async function poll() {
 }
 
 for (const b of $("size").querySelectorAll("button")) b.onclick = () => setSize(b.dataset.size);
+// The refresh interval is the service's, shared by everyone looking. A wall
+// screen opened with the API token cannot change it.
+for (const b of $("refresh").querySelectorAll("button")) {
+  b.onclick = async () => {
+    const r = await fetch("api/mosaic/refresh", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ interval: +b.dataset.s }),
+    });
+    if (r.ok) poll();
+  };
+}
 $("filter").oninput = draw;
 $("problems").onchange = () => { store("problems", $("problems").checked ? "1" : ""); draw(); };
 $("full").onclick = () => document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
 setSize(stored("size") || 280);
 $("problems").checked = stored("problems") === "1";
 poll();
-setInterval(poll, 2000);
+setInterval(poll, 5000);

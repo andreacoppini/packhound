@@ -115,6 +115,17 @@ func runServer(opt serverOptions) error {
 	if err := s.con.routes(mux); err != nil {
 		return err
 	}
+	if cfg.Mosaic.Refresh != 0 {
+		if err := s.con.mosaic.setRefresh(cfg.Mosaic.Refresh); err != nil {
+			log.Printf("mosaic: %v", err)
+		}
+	}
+	s.con.mosaic.save = func(seconds int) error {
+		return s.store.update(func(c *serverConfig) error {
+			c.Mosaic.Refresh = seconds
+			return nil
+		})
+	}
 	mux.HandleFunc("/auth/login", s.handleLogin)
 	mux.HandleFunc("/auth/logout", s.handleLogout)
 	mux.HandleFunc("/api/v1/", s.handleAPI)

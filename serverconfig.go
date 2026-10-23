@@ -32,6 +32,12 @@ type serverConfig struct {
 	Users []serverUser `json:"users"`
 	API   apiConfig    `json:"api"`
 	SNMP  snmpConfig   `json:"snmp"`
+
+	Mosaic mosaicConfig `json:"mosaic"`
+}
+
+type mosaicConfig struct {
+	Refresh int `json:"refresh"` // seconds; 0: the default
 }
 
 type serverUser struct {

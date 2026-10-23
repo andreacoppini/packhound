@@ -138,7 +138,8 @@ under neighbour discovery.
 ### Mosaic
 
 **Mosaic** in the header opens, in a new tab, a still of every MPEG-TS
-channel, taken about every 10 seconds. Each tile shows the channel's name and
+channel, refreshed every 15 seconds, 30 seconds (the default) or minute, as
+set by **Refresh** at the top of the page. Each tile shows the channel's name and
 group, its state (a red border and "No signal" when it stops, amber when it
 degrades), its errors in the last minute, how old the picture is, and a
 speaker: green while audio is arriving, red with a cross when the channel has
@@ -148,9 +149,15 @@ is not silent. Scrambled channels say so instead of showing a picture.
 A still is the next key picture on the channel, copied out of the stream
 Packhound already receives, so the mosaic joins nothing extra. ffmpeg decodes
 it to a small JPEG, one picture at a time, using at most a quarter of one
-core: with more channels than that allows in 10 seconds, a round of stills
+core: with more channels than that allows in the interval, a round of stills
 simply takes longer. Stills are taken only while someone has the mosaic open
-or an API client is reading it, and for 5 minutes after.
+or an API client is reading it. When nothing has asked for a minute (or for
+two intervals, when that is longer), it stops, and costs nothing. An API
+client that polls less often than that gets the stills as they were when
+the mosaic stopped, and its request starts it again.
+
+The refresh interval is shared by everyone looking, and the appliance
+remembers it. A wall screen opened with the API token cannot change it.
 
 The appliance includes a small ffmpeg (H.264, HEVC and MPEG-2 only). On
 Windows, macOS and Linux, Packhound uses an `ffmpeg` beside it or on the PATH,
@@ -367,6 +374,14 @@ and is checked on every push, but has not yet been run against real hardware;
 join mode works the same on all three.
 
 ## Changelog
+
+What's new in 1.2.2 (2026-10-23):
+
+```
+*) Mosaic: a choice of refresh interval, 15 seconds, 30 seconds (the
+   default) or one minute, saved on the appliance. Stills stop being
+   taken a minute after the last page or API request, rather than five.
+```
 
 What's new in 1.2.1 (2026-10-23):
 

@@ -296,6 +296,8 @@ body.loginpage { align-items: center; justify-content: center; }
 .mosaicpage input[type=search] { font: inherit; color: var(--text); background: var(--panel2); border: 1px solid var(--line); border-radius: 6px; padding: 4px 9px; width: 200px; }
 .mtoggle { color: var(--muted); display: flex; align-items: center; gap: 5px; cursor: pointer; }
 .mnote { color: var(--warn); }
+.mrefresh { color: var(--muted); display: flex; align-items: center; gap: 6px; }
+.mrefresh .segbtns { margin-right: 0; }
 .mosaic { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(var(--tile, 280px), 100%), 1fr)); gap: 10px; padding: 12px 14px; }
 .mempty { color: var(--muted); padding: 40px 14px; text-align: center; }
 .tile { margin: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }

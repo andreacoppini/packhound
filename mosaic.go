@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha1"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -26,13 +27,17 @@ import (
 // small JPEG. Decoding is the costly part, so one picture is decoded at a
 // time and decoding is held to a share of one core: with many channels the
 // round simply takes longer.
+//
+// Stills are taken only while someone is looking: the page polls the list
+// every few seconds, and an API client polls at its own pace. When nothing
+// has asked for a minute, or for two refresh intervals if that is longer,
+// the mosaic stops.
 const (
-	mosaicInterval = 10 * time.Second
-	mosaicBudget   = 0.25            // share of one core spent decoding, at most
-	mosaicIdle     = 5 * time.Minute // stop grabbing this long after the last look
-	grabTimeout    = 15 * time.Second
-	maxGrabs       = 8 // grabs collecting or waiting to be decoded
-	thumbWidth     = 320
+	mosaicBudget = 0.25 // share of one core spent decoding, at most
+	mosaicIdle   = time.Minute
+	grabTimeout  = 15 * time.Second
+	maxGrabs     = 8 // grabs collecting or waiting to be decoded
+	thumbWidth   = 320
 )
 
 type mosaic struct {
@@ -42,6 +47,8 @@ type mosaic struct {
 	mu     sync.Mutex
 	shots  map[string]*shot // by channel key
 	looked time.Time        // when someone last asked for the mosaic
+	every  time.Duration    // how often each channel's still is refreshed
+	save   func(seconds int) error
 	jobs   chan decodeJob
 	loop   sync.Once
 }
@@ -63,8 +70,32 @@ type decodeJob struct {
 }
 
 func newMosaic(mon *monitor.Monitor) *mosaic {
-	return &mosaic{mon: mon, ffmpeg: findFFmpeg(), shots: map[string]*shot{}, jobs: make(chan decodeJob, maxGrabs)}
+	return &mosaic{mon: mon, ffmpeg: findFFmpeg(), shots: map[string]*shot{}, jobs: make(chan decodeJob, maxGrabs),
+		every: defaultRefresh}
 }
+
+// The refresh intervals offered, in seconds.
+var refreshChoices = []int{15, 30, 60}
+
+const defaultRefresh = 30 * time.Second
+
+// setRefresh sets how often stills are refreshed, to one of refreshChoices.
+func (m *mosaic) setRefresh(seconds int) error {
+	ok := false
+	for _, c := range refreshChoices {
+		ok = ok || c == seconds
+	}
+	if !ok {
+		return fmt.Errorf("the refresh interval must be 15, 30 or 60 seconds")
+	}
+	m.mu.Lock()
+	m.every = time.Duration(seconds) * time.Second
+	m.mu.Unlock()
+	return nil
+}
+
+// idleAfter is how long the mosaic keeps going after the last request.
+func (m *mosaic) idleAfter() time.Duration { return max(mosaicIdle, 2*m.every) }
 
 // findFFmpeg looks for a decoder: one named in PACKHOUND_FFMPEG, the one the
 // appliance ships, one beside this program, then any on the PATH.
@@ -114,7 +145,7 @@ func (m *mosaic) run() {
 // those that found no key picture in time.
 func (m *mosaic) step(now time.Time) {
 	m.mu.Lock()
-	active := m.ffmpeg != "" && now.Sub(m.looked) < mosaicIdle
+	active := m.ffmpeg != "" && now.Sub(m.looked) < m.idleAfter()
 	idle := !active
 	for _, sh := range m.shots {
 		if !sh.grabbing.IsZero() {
@@ -208,7 +239,7 @@ func (m *mosaic) step(now time.Time) {
 		case c.Status == monitor.Lost:
 			continue
 		}
-		if sh.grabbing.IsZero() && !sh.queued && now.Sub(sh.tried) >= mosaicInterval {
+		if sh.grabbing.IsZero() && !sh.queued && now.Sub(sh.tried) >= m.every {
 			todo = append(todo, due{c.Key, sh.tried})
 		}
 	}
@@ -292,6 +323,27 @@ type mosaicChannel struct {
 func (m *mosaic) serve(w http.ResponseWriter, r *http.Request, prefix, query string) {
 	m.touch()
 	rest := strings.TrimPrefix(r.URL.Path, prefix)
+	if rest == "/refresh" && r.Method == http.MethodPost {
+		var req struct {
+			Interval int `json:"interval"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeErr(w, err)
+			return
+		}
+		if err := m.setRefresh(req.Interval); err != nil {
+			writeErr(w, err)
+			return
+		}
+		if m.save != nil {
+			if err := m.save(req.Interval); err != nil {
+				writeErr(w, err)
+				return
+			}
+		}
+		writeJSON(w, map[string]any{"interval": req.Interval})
+		return
+	}
 	if rest == "" || rest == "/" {
 		chans := m.mon.Channels()
 		out := make([]mosaicChannel, 0, len(chans))
@@ -307,8 +359,9 @@ func (m *mosaic) serve(w http.ResponseWriter, r *http.Request, prefix, query str
 			}
 			out = append(out, mc)
 		}
+		every := m.every
 		m.mu.Unlock()
-		info := map[string]any{"time": time.Now().UTC(), "interval": mosaicInterval.Seconds(), "decoder": m.ffmpeg != "", "channels": out}
+		info := map[string]any{"time": time.Now().UTC(), "interval": every.Seconds(), "decoder": m.ffmpeg != "", "channels": out}
 		if m.ffmpeg == "" {
 			info["note"] = "ffmpeg was not found, so there are no pictures: install it, or put it beside packhound"
 		}
