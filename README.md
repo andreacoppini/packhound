@@ -3,7 +3,10 @@
 Sniffs out every multicast stream arriving at a network port and tells you what
 it is, how fast it runs, who is sending it and whether it is healthy: IPTV
 channels, AES67 audio, mDNS, SSDP, PTP, IGMP and the rest of a network's
-chatter. One binary, no installer, a console in your browser.
+chatter. A mosaic shows a live still of every TV channel, with its state and
+whether its audio is arriving. One binary, no installer, a console in your
+browser; or a virtual appliance that watches your channels around the clock
+and answers SNMP and a REST API.
 
 > Author: Andrea Coppini · Feedback: <andrea@tacoppini.com>
 
@@ -136,6 +139,8 @@ IPv6 streams are on their own tab, so the table you care about is not buried
 under neighbour discovery.
 
 ### Mosaic
+
+![The Packhound mosaic](docs/mosaic.png)
 
 **Mosaic** in the header opens, in a new tab, a still of every MPEG-TS
 channel, refreshed every 15 seconds, 30 seconds (the default) or minute, as

@@ -1,0 +1,46 @@
+# Corrects text in published release notes: replaces one phrase with
+# another in each of the listed releases. Run it from the Actions tab.
+name: Edit release notes
+
+on:
+  workflow_dispatch:
+    inputs:
+      tags:
+        description: "Releases to edit, space separated (e.g. v1.2.0 v1.2.1)"
+        required: true
+      find:
+        description: "Text to replace"
+        required: true
+      replace:
+        description: "Replacement (may be empty)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  edit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Replace the text
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAGS: ${{ github.event.inputs.tags }}
+          FIND: ${{ github.event.inputs.find }}
+          REPLACE: ${{ github.event.inputs.replace }}
+        run: |
+          set -euo pipefail
+          for tag in $TAGS; do
+            gh release view "$tag" --repo "$REPO" --json body -q .body > body.md
+            python3 - <<'PY'
+          import os
+          s = open("body.md").read()
+          n = s.count(os.environ["FIND"])
+          open("body.md", "w").write(s.replace(os.environ["FIND"], os.environ["REPLACE"]))
+          print(f"{n} replaced")
+          PY
+            gh release edit "$tag" --repo "$REPO" --notes-file body.md
+            echo "$tag edited"
+          done
