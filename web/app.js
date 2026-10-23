@@ -86,6 +86,10 @@ async function init() {
     $("liveWhy").hidden = false;
   }
   ui.common = info.common;
+  ui.interfaces = info.interfaces;
+  $("remoteProto").value = info.defaults.remote || store.get("remote", "erspan");
+  $("remoteFrom").value = info.defaults.from || store.get("from", "");
+  $("remoteSession").value = info.defaults.session || store.get("session", "");
   // The background service: who is logged in, and the settings dialog.
   ui.server = info.server;
   if (info.server) {
@@ -139,6 +143,62 @@ function modeChanged() {
   $("joinTooRow").classList.toggle("disabled", m !== "capture");
   $("joinToo").disabled = m !== "capture";
   $("iface").disabled = m === "demo" || ui.running;
+  $("remoteOpts").hidden = m !== "remote";
+  remoteHelp();
+}
+
+// remoteHelp fills in the switch configuration examples with the address
+// the mirror should go to: the chosen interface's.
+function remoteHelp() {
+  const tzsp = $("remoteProto").value === "tzsp";
+  $("sessionRow").hidden = tzsp;
+  const ifc = (ui.interfaces || []).find((i) => i.name === $("iface").value);
+  const ip = ((ifc && ifc.addrs) || []).find((a) => /^\d+\.\d+\.\d+\.\d+$/.test(a)) || "<this machine>";
+  $("remoteWhere").textContent = tzsp
+    ? `Point the switch at ${ip}, UDP port 37008.`
+    : `Point the switch's ERSPAN session at ${ip}. Receiving GRE needs Packhound to run as root (administrator on Windows); the appliance does.`;
+  $("remoteHelp").textContent = tzsp
+    ? `MikroTik RouterOS (the packet sniffer streams TZSP):
+/tool sniffer set streaming-enabled=yes streaming-server=${ip} \\
+    filter-interface=ether2 filter-direction=rx
+/tool sniffer start
+
+The sniffer runs on the router's CPU: fine for a few channels,
+not for a whole IPTV feed.`
+    : `Mirror the receive direction only: both directions
+double every packet.
+
+Cisco IOS-XE:
+monitor session 1 type erspan-source
+ source interface Gi1/0/1 rx
+ destination
+  erspan-id 1
+  ip address ${ip}
+  origin ip address <switch IP>
+ no shutdown
+
+Arista EOS:
+monitor session ph source Ethernet1 rx
+monitor session ph destination tunnel mode gre source <switch IP> destination ${ip}
+
+Aruba CX:
+mirror session 1
+ destination tunnel ${ip} source <switch IP>
+ source interface 1/1/1 rx
+ enable
+
+Juniper EX:
+set forwarding-options analyzer ph input ingress interface ge-0/0/1.0
+set forwarding-options analyzer ph output ip-address ${ip}
+
+Ruckus ICX (FastIron with ERSPAN):
+monitor-profile 1 type ERSPAN
+ source-ip <switch IP>
+ destination-ip ${ip}
+interface ethernet 1/1/1
+ monitor profile 1 input
+
+Syntax varies by release: check your switch's guide.`;
 }
 
 function readConfig() {
@@ -164,8 +224,14 @@ function wire() {
         await api("/api/stop", {});
       } else {
         $("groupErr").hidden = true;
-        const req = { iface: $("iface").value, mode: mode(), groups: $("groups").value, join: $("joinToo").checked };
+        const req = {
+          iface: $("iface").value, mode: mode(), groups: $("groups").value, join: $("joinToo").checked,
+          remote: $("remoteProto").value, from: $("remoteFrom").value.trim(), session: $("remoteSession").value.trim(),
+        };
         store.set("iface", req.iface);
+        store.set("remote", req.remote);
+        store.set("from", req.from);
+        store.set("session", req.session);
         store.set("groups", req.groups);
         await api("/api/start", req);
         ui.sel = "";
@@ -195,6 +261,8 @@ function wire() {
     } catch (e) { toast(e.message); }
   };
   for (const r of document.querySelectorAll("input[name=mode]")) r.onchange = modeChanged;
+  $("remoteProto").onchange = remoteHelp;
+  $("iface").addEventListener("change", remoteHelp);
   $("joinToo").onchange = () => store.set("joinToo", $("joinToo").checked);
   $("addCommon").onclick = () => {
     const g = $("groups");
@@ -208,8 +276,20 @@ function wire() {
   $("showLinkLocal").onchange = () => { ui.showLinkLocal = $("showLinkLocal").checked; store.set("showLinkLocal", ui.showLinkLocal); render(); };
   $("filter").oninput = () => { ui.filter = $("filter").value.toLowerCase(); render(); };
   $("clear").onclick = async () => { await api("/api/clear", {}); ui.sel = ""; poll(); };
-  $("expCsv").onclick = () => (window.location.href = "/api/export?fmt=csv");
-  $("expJson").onclick = () => (window.location.href = "/api/export?fmt=json");
+  $("expCsv").onclick = () => (window.location.href = "/api/export?fmt=csv" + viewParam());
+  $("expJson").onclick = () => (window.location.href = "/api/export?fmt=json" + viewParam());
+  $("openCap").onclick = () => $("capFile").click();
+  $("capFile").onchange = () => {
+    const f = $("capFile").files[0];
+    $("capFile").value = "";
+    if (f) openCapture(f);
+  };
+  $("fileClose").onclick = async () => {
+    ui.view = "";
+    ui.sel = "";
+    try { await fetch("/api/import", { method: "DELETE", headers: { "Content-Type": "application/json" } }); } catch (e) {}
+    poll();
+  };
   $("expand").onclick = () => {
     const big = $("drawer").classList.toggle("big");
     $("expand").textContent = big ? "Shrink" : "Expand";
@@ -290,6 +370,68 @@ function setFam(f) {
   for (const b of document.querySelectorAll(".fam")) b.classList.toggle("on", +b.dataset.fam === f);
 }
 
+// ---- capture files ----
+
+// viewParam asks the service for the capture file's figures, not live ones.
+function viewParam() {
+  return ui.view === "file" ? "&view=file" : "";
+}
+
+// openCapture uploads a capture file and shows it once it has been read.
+// The upload is the file itself, read by the service as it arrives; its
+// progress is polled meanwhile.
+async function openCapture(f) {
+  const bar = $("fileBar");
+  bar.hidden = false;
+  $("fileClose").hidden = true;
+  $("fileText").textContent = `Reading ${f.name}…`;
+  const progress = setInterval(async () => {
+    try {
+      const st = await api("/api/import");
+      const v = st.file;
+      if (v && !v.done) {
+        const pct = f.size ? ` ${Math.min(100, Math.round((100 * v.read) / f.size))}%` : "";
+        $("fileText").textContent = `Reading ${f.name}:${pct} · ${v.packets.toLocaleString()} multicast packets`;
+      }
+    } catch (e) {}
+  }, 500);
+  try {
+    const r = await fetch(`/api/import?name=${encodeURIComponent(f.name)}`, {
+      method: "POST", headers: { "Content-Type": "application/vnd.tcpdump.pcap" }, body: f,
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || r.statusText);
+    ui.view = "file";
+    ui.sel = "";
+  } catch (e) {
+    toast(`${f.name}: ${e.message}`);
+  } finally {
+    clearInterval(progress);
+    $("fileClose").hidden = false;
+    poll();
+  }
+}
+
+// drawFile shows the banner for the capture file being viewed, and hides
+// what only means something live.
+function drawFile(file) {
+  const on = ui.view === "file" && file && file.done;
+  if (ui.view === "file" && !file) ui.view = ""; // closed elsewhere
+  document.body.classList.toggle("fileview", !!on);
+  $("mosaicLink").href = on ? "mosaic?view=file" : "mosaic";
+  if (!on) {
+    if (!$("fileClose").hidden) $("fileBar").hidden = true;
+    return;
+  }
+  $("fileBar").hidden = false;
+  const t = (s) => new Date(s).toLocaleTimeString([], { hour12: false });
+  const dur = (new Date(file.last) - new Date(file.first)) / 1000;
+  let text = `Viewing capture ${file.name}: ${new Date(file.first).toLocaleDateString()} ${t(file.first)} to ${t(file.last)} (${fmtDur(dur)}), ${file.packets.toLocaleString()} multicast packets`;
+  if (file.mirrored) text += `, ${file.mirrored.toLocaleString()} of them unwrapped from ERSPAN or TZSP`;
+  if (!file.packets) text += ". There is no multicast traffic in this file.";
+  $("fileText").textContent = text;
+}
+
 // ---- polling ----
 
 let polling = false;
@@ -298,7 +440,7 @@ async function poll() {
   polling = true;
   let st;
   try {
-    st = await api(`/api/state?sel=${encodeURIComponent(ui.sel)}&win=${ui.win}`);
+    st = await api(`/api/state?sel=${encodeURIComponent(ui.sel)}&win=${ui.win}${viewParam()}`);
   } catch (e) {
     $("stateText").textContent = "Console disconnected: is Packhound still running?";
     $("dot").className = "dot";
@@ -316,6 +458,22 @@ async function poll() {
   } finally {
     polling = false;
   }
+}
+
+// mirrorText says whether the switch's mirror is arriving: frames a
+// second (from the change since the last poll) and from where.
+function mirrorText(m, since) {
+  const proto = m.proto === "tzsp" ? "TZSP" : "ERSPAN";
+  const prev = ui.mirrorPrev;
+  const now = Date.now();
+  if (prev && now > prev.t) ui.mirrorRate = Math.max(0, ((m.frames - prev.frames) * 1000) / (now - prev.t));
+  ui.mirrorPrev = { t: now, frames: m.frames };
+  if (!m.frames) {
+    const ignored = m.ignored ? ` (${m.ignored.toLocaleString()} ignored: another switch or session, or unreadable)` : "";
+    return `Waiting for ${proto} at ${m.listen} · ${fmtDur(since)}${ignored}`;
+  }
+  const session = m.session >= 0 ? `, session ${m.session}` : "";
+  return `Mirror from ${m.from}${session} · ${proto} · ${Math.round(ui.mirrorRate || 0).toLocaleString()} frames/s · ${fmtDur(since)}`;
 }
 
 function isLinkLocal(r) {
@@ -343,6 +501,9 @@ function render() {
   snap.alerts = snap.alerts || [];
   snap.log = snap.log || [];
   ui.running = eng.running;
+  drawFile(ui.last.file);
+  // A mirror's groups never reach this machine, so a player here cannot join them.
+  document.body.classList.toggle("remotemode", eng.running && eng.mode === "remote");
 
   // header
   const lb = $("listen");
@@ -354,6 +515,7 @@ function render() {
     if (eng.running) r.checked = r.value === eng.mode;
   }
   $("groups").readOnly = eng.running;
+  for (const id of ["remoteProto", "remoteFrom", "remoteSession"]) $(id).disabled = eng.running;
   $("iface").disabled = eng.running || mode() === "demo";
   const rec = eng.recording;
   const recording = rec && rec.active;
@@ -364,6 +526,7 @@ function render() {
     const modeName = { capture: "capturing", join: `joined ${eng.joined} groups`, demo: "demo traffic" }[eng.mode] || eng.mode;
     const since = (new Date(snap.now) - new Date(eng.started)) / 1000;
     $("stateText").textContent = eng.mode === "demo" ? `Demo traffic · ${fmtDur(since)}` : `Listening on ${eng.iface} · ${modeName} · ${fmtDur(since)}`;
+    if (eng.mirror) $("stateText").textContent = mirrorText(eng.mirror, since);
     $("dot").className = "dot " + (recording ? "rec" : "on");
   } else {
     $("stateText").textContent = eng.failed ? "Stopped: " + eng.failed : "Not listening";

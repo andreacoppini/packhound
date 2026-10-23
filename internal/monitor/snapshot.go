@@ -211,6 +211,9 @@ func (s *Stream) row() Row {
 			}
 		}
 	}
+	if cfg.Offline {
+		s.offlineRow(&r)
+	}
 	if s.status == Lost {
 		r.Errors = fmt.Sprintf("silent %s", s.m.now.Sub(s.last).Round(time.Second))
 		r.ErrLevel = "err"
@@ -220,6 +223,25 @@ func (s *Stream) row() Row {
 		r.Spark[59-i] = float64(b.bytes) * 8
 	}
 	return r
+}
+
+// offlineRow turns a row's figures into whole-capture ones: the average
+// rate over the stream's time in the file, and its errors in all of it.
+func (s *Stream) offlineRow(r *Row) {
+	dur := max(1, s.last.Sub(s.first).Seconds())
+	r.BPS = float64(s.bytes) * 8 / dur
+	r.PPS = float64(s.pkts) / dur
+	if t, ok := s.dec.(interface{ errorsTotal() uint64 }); ok && r.Errors != "-" {
+		n := t.errorsTotal()
+		r.ErrorsLastMinute = n
+		r.Errors = "0"
+		if r.ErrLevel == "err" { // judged on the last minute; the total rules here
+			r.ErrLevel = "ok"
+		}
+		if n > 0 {
+			r.Errors, r.ErrLevel = fmt.Sprintf("%d in capture", n), "err"
+		}
+	}
 }
 
 func (s *Stream) detail(r Row, window int) *StreamDetail {

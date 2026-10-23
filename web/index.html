@@ -23,12 +23,15 @@
     <div class="counter err"><b id="cProblems">0</b><i>problems</i></div>
   </div>
   <span class="who" id="who" hidden></span>
-  <a href="mosaic" target="_blank" rel="noopener" title="A still of every channel, in a new tab"><button type="button">Mosaic</button></a>
+  <button id="openCap" title="Analyse a pcap or pcapng file from Wireshark or tcpdump">Open capture…</button>
+  <input type="file" id="capFile" accept=".pcap,.pcapng,.cap,.dmp" hidden>
+  <a id="mosaicLink" href="mosaic" target="_blank" rel="noopener" title="A still of every channel, in a new tab"><button type="button">Mosaic</button></a>
   <button id="settingsBtn" hidden>Settings</button>
   <a id="logout" href="/auth/logout" hidden><button type="button">Log out</button></a>
   <button id="expCsv" title="Download the stream table as CSV">CSV</button>
   <button id="expJson" title="Download the stream table and alerts as JSON">JSON</button>
 </header>
+<div class="filebar" id="fileBar" hidden><span id="fileText"></span><button id="fileClose" class="small">Back to live</button></div>
 
 <div class="app">
 <aside id="aside">
@@ -41,8 +44,20 @@
           <span><b>Capture everything</b> · every multicast frame the port receives, no join needed</span></label>
         <label class="check"><input type="radio" name="mode" value="join">
           <span><b>Join groups only</b> · no driver or admin rights; sees just the groups listed below</span></label>
+        <label class="check"><input type="radio" name="mode" value="remote">
+          <span><b>Remote switch</b> · a switch mirrors a port to this machine, as ERSPAN or TZSP</span></label>
         <label class="check"><input type="radio" name="mode" value="demo">
           <span><b>Demo</b> · made-up traffic, to try the console</span></label>
+      </div>
+      <div class="remote" id="remoteOpts" hidden>
+        <label><span>The switch sends</span><select id="remoteProto">
+          <option value="erspan">ERSPAN: Cisco, Arista, Juniper, Aruba, Ruckus ICX</option>
+          <option value="tzsp">TZSP: MikroTik</option>
+        </select></label>
+        <label><span>Only from this switch (optional)</span><input id="remoteFrom" placeholder="any switch" spellcheck="false"></label>
+        <label id="sessionRow"><span>Only this ERSPAN session (optional)</span><input id="remoteSession" placeholder="any session" inputmode="numeric"></label>
+        <div class="hint" id="remoteWhere"></div>
+        <details class="hint"><summary>Switch configuration examples</summary><pre id="remoteHelp"></pre></details>
       </div>
       <div class="hint warn" id="liveWhy" hidden></div>
     </div>

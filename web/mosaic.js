@@ -7,7 +7,13 @@
 
 const $ = (id) => document.getElementById(id);
 const token = new URLSearchParams(location.search).get("token");
-const api = token ? "api/v1/mosaic?token=" + encodeURIComponent(token) : "api/mosaic";
+// A capture file's mosaic: stills taken from the file, nothing to refresh.
+const fileView = !token && new URLSearchParams(location.search).get("view") === "file";
+const api = token ? "api/v1/mosaic?token=" + encodeURIComponent(token) : fileView ? "api/mosaic?view=file" : "api/mosaic";
+if (fileView) {
+  document.title = "Packhound mosaic · capture file";
+  document.querySelector(".brand span").textContent = "mosaic · capture file";
+}
 
 const tiles = new Map(); // channel id -> tile element
 let last = null;
@@ -88,8 +94,12 @@ function draw() {
     au.title = c.audio ? "Audio arriving" : "No audio arriving";
 
     const age = el.querySelector(".age");
-    age.textContent = c.shotAt ? ago(c.shotAt, now) : "";
-    age.classList.toggle("stale", c.shotAt && now - new Date(c.shotAt) > 3 * last.interval * 1000);
+    if (fileView) { // when in the capture the still is from
+      age.textContent = c.shotAt ? new Date(c.shotAt).toLocaleTimeString([], { hour12: false }) : "";
+    } else {
+      age.textContent = c.shotAt ? ago(c.shotAt, now) : "";
+      age.classList.toggle("stale", c.shotAt && now - new Date(c.shotAt) > 3 * last.interval * 1000);
+    }
 
     const errs = el.querySelector(".errs");
     errs.textContent = c.errLevel === "err" && c.status !== "Lost" ? c.errors : "";
@@ -107,7 +117,7 @@ function draw() {
     if (!last.channels.some((c) => c.id === id)) tiles.delete(id);
   }
   for (const b of $("refresh").querySelectorAll("button")) b.classList.toggle("on", +b.dataset.s === last.interval);
-  $("refreshBox").hidden = !!token || !last.decoder;
+  $("refreshBox").hidden = !!token || fileView || !last.decoder;
   $("count").textContent = last.channels.length + " channels" + (problems ? " · " + problems + " with problems" : "");
   $("note").hidden = !last.note;
   $("note").textContent = last.note || "";

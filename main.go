@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"syscall"
 	"text/tabwriter"
 	"time"
@@ -35,7 +36,11 @@ type options struct {
 	groups    string
 	joinFile  string
 	joinToo   bool
+	remote    string
+	from      string
+	session   string
 	duration  time.Duration
+	read      string
 	out       string
 	port      int
 	noBrowser bool
@@ -48,12 +53,16 @@ type options struct {
 func parseFlags() options {
 	var o options
 	flag.StringVar(&o.iface, "i", "", "network interface to listen on (name or index; see -list)")
-	flag.StringVar(&o.mode, "mode", modeCapture, "capture (every multicast frame; needs root or Npcap), join (only the listed groups; no privileges) or demo")
+	flag.StringVar(&o.mode, "mode", modeCapture, "capture (every multicast frame; needs root or Npcap), join (only the listed groups; no privileges), remote (traffic a switch mirrors here) or demo")
+	flag.StringVar(&o.remote, "remote", "erspan", "with -mode remote: what the switch sends, erspan (GRE; needs root) or tzsp (UDP 37008, as MikroTik sends)")
+	flag.StringVar(&o.from, "from", "", "with -mode remote: only take mirrored traffic from this switch address")
+	flag.StringVar(&o.session, "session", "", "with -mode remote: only this ERSPAN session ID")
 	flag.StringVar(&o.groups, "join", "", "groups to join, comma separated, e.g. 239.1.1.1-40:5000,[ff02::fb]:5353")
 	flag.StringVar(&o.joinFile, "join-file", "", "file listing groups to join, one per line")
 	flag.BoolVar(&o.joinToo, "send-joins", true, "in capture mode, also join the listed groups so snooping switches forward them")
 	flag.DurationVar(&o.duration, "duration", 0, "listen this long without the console, then print the streams and exit")
-	flag.StringVar(&o.out, "out", "", "with -duration: write the streams to this .csv or .json file")
+	flag.StringVar(&o.read, "read", "", "read a capture file (pcap or pcapng) instead of listening, print the streams and exit")
+	flag.StringVar(&o.out, "out", "", "with -duration or -read: write the streams to this .csv or .json file")
 	flag.IntVar(&o.port, "port", 0, "console port (default: any free port)")
 	flag.BoolVar(&o.noBrowser, "no-browser", false, "do not open the console in a browser")
 	flag.BoolVar(&o.start, "start", false, "start listening as soon as the console opens")
@@ -65,7 +74,7 @@ func parseFlags() options {
 		fmt.Fprintf(os.Stderr, "With no arguments it opens a console in your browser. Options:\n\n")
 		flag.PrintDefaults()
 		fmt.Fprintf(os.Stderr, "\nAs a background service (the appliance runs this):\n  packhound server [-config /etc/packhound/config.json] [-https :443]\n  packhound setup     first-time setup of the appliance\n  packhound passwd    set a login's password\n")
-		fmt.Fprintf(os.Stderr, "\nExamples:\n  packhound\n  packhound -i eth0 -duration 30s -out streams.csv\n  packhound -i \"Ethernet 2\" -mode join -join 239.10.1.1-40:5000\n  packhound -mode demo\n")
+		fmt.Fprintf(os.Stderr, "\nExamples:\n  packhound\n  packhound -i eth0 -duration 30s -out streams.csv\n  packhound -read site.pcapng -out streams.json\n  packhound -i \"Ethernet 2\" -mode join -join 239.10.1.1-40:5000\n  packhound -mode remote -remote tzsp -duration 1m\n  packhound -mode demo\n")
 	}
 	flag.Parse()
 	return o
@@ -112,9 +121,9 @@ func run(o options) error {
 		return fmt.Errorf("unexpected argument %q (see -h)", flag.Arg(0))
 	}
 	switch o.mode {
-	case modeCapture, modeJoin, modeDemo:
+	case modeCapture, modeJoin, modeRemote, modeDemo:
 	default:
-		return fmt.Errorf("-mode must be capture, join or demo, not %q", o.mode)
+		return fmt.Errorf("-mode must be capture, join, remote or demo, not %q", o.mode)
 	}
 	if o.joinFile != "" {
 		b, err := os.ReadFile(o.joinFile)
@@ -131,11 +140,14 @@ func run(o options) error {
 			o.iface = ifs[0].Name
 		}
 	}
+	if o.read != "" {
+		return readFile(o)
+	}
 	if o.duration > 0 {
 		return runHeadless(o)
 	}
 	if o.out != "" {
-		return fmt.Errorf("-out needs -duration")
+		return fmt.Errorf("-out needs -duration or -read")
 	}
 	return runConsole(o)
 }
@@ -163,7 +175,7 @@ func listInterfaces() error {
 
 func runHeadless(o options) error {
 	eng := newEngine(monitor.DefaultConfig())
-	req := startRequest{Iface: o.iface, Mode: o.mode, Groups: o.groups, Join: o.joinToo}
+	req := startRequest{Iface: o.iface, Mode: o.mode, Groups: o.groups, Join: o.joinToo, Remote: o.remote, From: o.from, Session: o.session}
 	if err := eng.start(req); err != nil {
 		return err
 	}
@@ -178,16 +190,46 @@ func runHeadless(o options) error {
 	}
 	eng.stop()
 
-	snap := eng.mon.Snapshot("", 60)
+	return report(eng.mon.Snapshot("", 60), o.out, "15:04:05")
+}
+
+// readFile analyses a capture file and prints what it holds.
+func readFile(o options) error {
+	f, err := os.Open(o.read)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	v := newFileView(filepath.Base(o.read), monitor.DefaultConfig(), findFFmpeg())
+	if err := readCapture(f, v, &sync.Mutex{}); err != nil {
+		return fmt.Errorf("%s: %w", o.read, err)
+	}
+	fmt.Fprintf(os.Stderr, "%s: %s to %s (%s), %d frames, %d multicast packets\n", v.Name,
+		v.First.Format("2006-01-02 15:04:05"), v.Last.Format("15:04:05"), v.Last.Sub(v.First).Round(time.Second), v.Frames, v.Packets)
+	return report(v.mon.Snapshot("", 60), o.out, "15:04:05")
+}
+
+// report prints the log and the stream table, and writes them to out when
+// it is set.
+func report(snap monitor.Snapshot, out, stamp string) error {
 	for _, l := range snap.Log {
-		fmt.Fprintf(os.Stderr, "%s  %s\n", l.Time.Format("15:04:05"), l.Message)
+		fmt.Fprintf(os.Stderr, "%s  %s\n", l.Time.Format(stamp), l.Message)
 	}
 	printTable(snap.Rows)
-	if o.out != "" {
-		if err := writeOut(o.out, snap); err != nil {
+	if len(snap.Alerts) > 0 {
+		fmt.Println()
+		tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+		fmt.Fprintln(tw, "ALERT\tGROUP\tNAME\tMESSAGE")
+		for _, a := range snap.Alerts {
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", a.Time.Format(stamp), a.Group, a.Name, a.Message)
+		}
+		tw.Flush()
+	}
+	if out != "" {
+		if err := writeOut(out, snap); err != nil {
 			return err
 		}
-		fmt.Fprintf(os.Stderr, "%d streams written to %s\n", len(snap.Rows), o.out)
+		fmt.Fprintf(os.Stderr, "%d streams written to %s\n", len(snap.Rows), out)
 	}
 	return nil
 }

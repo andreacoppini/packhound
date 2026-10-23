@@ -39,6 +39,9 @@ type Config struct {
 	ErrPerMin   int           // more errors than this in a minute is Degraded
 	NewSenders  bool          // alert when a media stream gains a sender
 	AvgSeconds  int           // rates shown are averaged over this many seconds
+	// Offline is for a capture file read after the fact: rates are averaged
+	// over each stream's time in the file, and errors are totals.
+	Offline bool
 }
 
 // DefaultConfig is what the console starts with.
@@ -183,8 +186,14 @@ func (m *Monitor) Config() Config {
 
 // Logf adds a line to the log the console shows.
 func (m *Monitor) Logf(format string, a ...any) {
+	m.LogAt(time.Now(), format, a...)
+}
+
+// LogAt adds a line to the log, stamped t: for a capture file, the time in
+// the capture it is about.
+func (m *Monitor) LogAt(t time.Time, format string, a ...any) {
 	m.mu.Lock()
-	m.logf(time.Now(), format, a...)
+	m.logf(t, format, a...)
 	m.mu.Unlock()
 }
 

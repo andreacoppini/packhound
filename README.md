@@ -43,7 +43,10 @@ Console: http://127.0.0.1:52413
 ```
 
 Pick the interface, choose how to listen, press **Listen**. Choose **Demo** to
-see the console working with made-up traffic and no network at all.
+see the console working with made-up traffic and no network at all. To look
+at traffic captured elsewhere, use **Open capture…** instead (see
+[Capture files](#capture-files)); to watch a switch you are not plugged
+into, see [Remote switches](#remote-switches-erspan-and-tzsp).
 
 ### Two ways to listen
 
@@ -185,6 +188,67 @@ so the frames are rebuilt around the payloads. Recordings stop at 2 GB.
 
 **CSV** and **JSON** download the stream table; JSON includes the alerts.
 
+### Capture files
+
+**Open capture…** analyses a `.pcap` or `.pcapng` file from Wireshark or
+tcpdump: Ethernet, `tcpdump -i any` (Linux cooked v1 and v2) and raw IP
+captures, up to 4 GB. The file is read on its own clock, as fast as it
+loads, into a view of its own, so live monitoring (and on the appliance,
+SNMP and the REST API) carries on meanwhile. A banner says which file you
+are looking at; **Back to live** returns to the live view.
+
+The result is the state of things when the capture ended:
+
+- Rates are each stream's average over its time in the file, and errors
+  are totals for the whole capture.
+- Alerts carry the capture's own times, so the alert list is a timeline of
+  what went wrong: when a channel stopped, degraded, came back.
+- The mosaic shows one still per channel, taken from the file, with the
+  time in the capture it is from.
+- A capture of a switch's mirror (ERSPAN or TZSP, as it arrives) is
+  unwrapped: the mirrored traffic inside is what gets analysed.
+
+The detail chart keeps the last hour of a longer capture. The same works
+from the command line, for scripts:
+
+```
+packhound -read site.pcapng                     # print the streams and the alert timeline
+packhound -read site.pcapng -out streams.json   # and save them
+```
+
+### Remote switches (ERSPAN and TZSP)
+
+A switch can mirror a port to Packhound over the network, so the channels
+it carries can be watched without a cable to it. Choose **Remote switch**,
+pick the interface whose address the switch sends to, and say what the
+switch sends:
+
+| Switch | Sends | Packhound needs |
+|---|---|---|
+| Cisco, Arista, Juniper, Aruba, Ruckus ICX | ERSPAN (GRE): Types I, II and III, or plain GRE bridging | root (administrator on Windows): GRE only reaches raw sockets. The appliance runs as root. |
+| MikroTik | TZSP, to UDP port 37008 (the packet sniffer's streaming) | nothing |
+
+Optionally, take the mirror only from one switch's address, or one ERSPAN
+session, when several point at the same Packhound. The console shows
+configuration examples for each switch with this machine's address filled
+in, and the status line says whether the mirror is arriving: frames a
+second, and from which switch.
+
+Mirror the **receive** direction of the port only: mirroring both doubles
+every datagram, which Packhound reports as duplicated datagrams. A switch
+mirrors what crosses the port, so it does not need to join anything; the
+mirror does add the mirrored port's traffic to the network path between
+the switch and Packhound. Jitter is measured on arrival here, so it
+includes that path. MikroTik's sniffer runs on the router's CPU: fine for a
+few channels, not for a whole IPTV feed.
+
+From the command line:
+
+```
+sudo packhound -i eth0 -mode remote -remote erspan -from 10.0.0.2 -duration 1m
+packhound -i eth0 -mode remote -remote tzsp
+```
+
 ### From the command line
 
 The same engine runs without the console:
@@ -194,6 +258,8 @@ packhound -list                                   # interfaces, and whether capt
 packhound -i eth0 -duration 30s -out streams.csv  # listen, print the table, save it
 packhound -i "Ethernet 2" -mode join -join 239.10.1.1-40:5000 -duration 1m
 packhound -i en0 -join-file channels.txt -start   # console, already listening
+packhound -read capture.pcapng -out streams.json  # analyse a capture file
+packhound -i eth0 -mode remote -remote tzsp       # a MikroTik's mirror
 packhound -mode demo
 ```
 
@@ -379,6 +445,21 @@ and is checked on every push, but has not yet been run against real hardware;
 join mode works the same on all three.
 
 ## Changelog
+
+What's new in 1.3.0 (2026-10-23):
+
+```
+*) Capture files: Open capture... analyses a pcap or pcapng file from
+   Wireshark or tcpdump, in a view of its own while live monitoring
+   carries on. Rates are averages over the capture, errors are totals,
+   alerts are a timeline in capture time, and the mosaic has a still of
+   each channel from the file. On the command line: -read.
+
+*) Remote switches: receive a switch's port mirror over the network, as
+   ERSPAN (Types I, II and III, and plain GRE: Cisco, Arista, Juniper,
+   Aruba, Ruckus ICX) or TZSP (MikroTik), with configuration examples in
+   the console. On the command line: -mode remote.
+```
 
 What's new in 1.2.2 (2026-10-23):
 

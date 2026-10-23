@@ -1,3 +1,10 @@
+**Packhound 1.3.0: capture files and remote switches.**
+
+- **Open a capture file:** **Open capture…** analyses a `.pcap` or `.pcapng` from Wireshark or tcpdump in a view of its own, while live monitoring (and on the appliance, SNMP and the REST API) carries on. The result is the state of things when the capture ended: rates averaged over the capture, errors totalled, alerts as a timeline in the capture's own times, and a mosaic still of each channel taken from the file. Captures of a switch's mirror are unwrapped. From the command line: `packhound -read site.pcapng -out streams.json`.
+- **Watch a switch you are not plugged into:** the new **Remote switch** mode receives a port mirror over the network, as ERSPAN (Types I, II and III, or plain GRE: Cisco, Arista, Juniper, Aruba, Ruckus ICX) or as TZSP (MikroTik's sniffer streaming). The console shows configuration examples with Packhound's address filled in, and says whether the mirror is arriving and from which switch. ERSPAN needs root (the appliance runs as root); TZSP needs nothing.
+
+Earlier notes follow.
+
 **Packhound 1.2.2:** the mosaic's refresh interval can be set to 15 seconds, 30 seconds (the new default) or one minute, from the top of the mosaic page; the appliance remembers it. Stills are taken only while the mosaic page is open or the API is being polled, and stop a minute after the last request (it was five). Earlier notes follow.
 
 **Packhound 1.2.1** fixes the mosaic for channels whose encoders send open GOPs: their key pictures are I-frames marked as recovery points rather than IDR frames, and 1.2.0 could not decode them. Radio channels are now labelled as radio rather than "no video". 1.2.0's notes follow.

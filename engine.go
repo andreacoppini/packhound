@@ -3,6 +3,8 @@ package main
 import (
 	"errors"
 	"fmt"
+	"net/netip"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -19,6 +21,7 @@ const (
 	modeCapture = "capture"
 	modeJoin    = "join"
 	modeDemo    = "demo"
+	modeRemote  = "remote" // mirrored traffic sent by a switch: ERSPAN or TZSP
 )
 
 // startRequest is what the console or the command line asks for.
@@ -27,6 +30,13 @@ type startRequest struct {
 	Mode   string `json:"mode"`
 	Groups string `json:"groups"`
 	Join   bool   `json:"join"` // with capture: also join the listed groups
+
+	// Remote mode: what the switch sends (capture.RemoteERSPAN or
+	// RemoteTZSP), and optionally the only switch and ERSPAN session to
+	// take it from.
+	Remote  string `json:"remote,omitempty"`
+	From    string `json:"from,omitempty"`
+	Session string `json:"session,omitempty"`
 }
 
 // engine runs one listening session at a time, feeding the monitor.
@@ -40,6 +50,7 @@ type engine struct {
 	started  time.Time
 	src      capture.Source
 	joins    *capture.Joined
+	remote   *capture.Remote
 	rec      *recorder
 	lastRec  *recordingStatus
 	done     chan struct{}
@@ -52,13 +63,14 @@ func newEngine(cfg monitor.Config) *engine {
 }
 
 type engineStatus struct {
-	Running   bool             `json:"running"`
-	Mode      string           `json:"mode"`
-	Iface     string           `json:"iface"`
-	Started   time.Time        `json:"started"`
-	Joined    int              `json:"joined"`
-	Failed    string           `json:"failed,omitempty"`
-	Recording *recordingStatus `json:"recording,omitempty"`
+	Running   bool                 `json:"running"`
+	Mode      string               `json:"mode"`
+	Iface     string               `json:"iface"`
+	Started   time.Time            `json:"started"`
+	Joined    int                  `json:"joined"`
+	Mirror    *capture.RemoteStats `json:"mirror,omitempty"`
+	Failed    string               `json:"failed,omitempty"`
+	Recording *recordingStatus     `json:"recording,omitempty"`
 }
 
 func (e *engine) status() engineStatus {
@@ -67,6 +79,10 @@ func (e *engine) status() engineStatus {
 	s := engineStatus{Running: e.running, Mode: e.mode, Iface: e.iface, Started: e.started, Failed: e.failed}
 	if e.joins != nil {
 		s.Joined = e.joins.Count()
+	}
+	if e.remote != nil {
+		m := e.remote.Stats()
+		s.Mirror = &m
 	}
 	if e.rec != nil {
 		r := e.rec.status()
@@ -108,8 +124,24 @@ func (e *engine) start(req startRequest) error {
 	mode := req.Mode
 	var src capture.Source
 	var joins *capture.Joined
+	var remote *capture.Remote
 
 	switch mode {
+	case modeRemote:
+		cfg, err := remoteConfig(req, ifc)
+		if err != nil {
+			return err
+		}
+		if remote, err = capture.OpenRemote(cfg); err != nil {
+			return err
+		}
+		src = remote
+		st := remote.Stats()
+		what := "ERSPAN (GRE)"
+		if cfg.Proto == capture.RemoteTZSP {
+			what = "TZSP (UDP 37008)"
+		}
+		e.mon.Logf("Receiving mirrored traffic, %s, at %s", what, st.Listen)
 	case modeDemo:
 		src = demoSource{demo.New()}
 		e.mon.Logf("Demo traffic: nothing here is real")
@@ -162,7 +194,7 @@ func (e *engine) start(req startRequest) error {
 	if mode == modeDemo {
 		e.iface = "demo"
 	}
-	e.src, e.joins = src, joins
+	e.src, e.joins, e.remote = src, joins, remote
 	e.done, e.stopTick = make(chan struct{}), make(chan struct{})
 	e.mu.Unlock()
 
@@ -289,7 +321,7 @@ func (e *engine) stop() {
 	}
 	e.stopRecording()
 	e.mu.Lock()
-	e.src, e.joins = nil, nil
+	e.src, e.joins, e.remote = nil, nil, nil
 	e.mu.Unlock()
 	e.mon.Logf("Stopped listening")
 }
@@ -332,6 +364,40 @@ func (e *engine) stopRecording() {
 		msg += " (stopped at the 2 GB limit)"
 	}
 	e.mon.Logf("%s", msg)
+}
+
+// remoteConfig reads what a remote-mode request asks for. The mirror is
+// received at the interface's IPv4 address (Windows needs one), or at any
+// address when it has none.
+func remoteConfig(req startRequest, ifc capture.Interface) (capture.RemoteConfig, error) {
+	cfg := capture.RemoteConfig{Proto: req.Remote, Session: -1}
+	if cfg.Proto == "" {
+		cfg.Proto = capture.RemoteERSPAN
+	}
+	if cfg.Proto != capture.RemoteERSPAN && cfg.Proto != capture.RemoteTZSP {
+		return cfg, fmt.Errorf("the switch sends ERSPAN or TZSP, not %q", req.Remote)
+	}
+	for _, a := range ifc.Addrs {
+		if ip, err := netip.ParseAddr(a); err == nil && ip.Is4() {
+			cfg.Listen = ip
+			break
+		}
+	}
+	if f := strings.TrimSpace(req.From); f != "" {
+		ip, err := netip.ParseAddr(f)
+		if err != nil || !ip.Is4() {
+			return cfg, fmt.Errorf("the switch's address %q is not an IPv4 address", f)
+		}
+		cfg.From = ip
+	}
+	if s := strings.TrimSpace(req.Session); s != "" && cfg.Proto == capture.RemoteERSPAN {
+		n, err := strconv.Atoi(s)
+		if err != nil || n < 0 || n > 1023 {
+			return cfg, fmt.Errorf("an ERSPAN session ID is 0 to 1023, not %q", s)
+		}
+		cfg.Session = n
+	}
+	return cfg, nil
 }
 
 // demoSource adapts the demo generator to capture.Source.

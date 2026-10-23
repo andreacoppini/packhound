@@ -288,6 +288,18 @@ body.loginpage { align-items: center; justify-content: center; }
 .ifedit { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px; }
 @media (max-width: 600px) { .ifrow { grid-template-columns: 1fr; } }
 
+/* ---- remote switch ---- */
+.remote { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.remote input { font: inherit; color: var(--text); background: var(--panel2); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; }
+.remote details summary { cursor: pointer; color: var(--accent); }
+.remote pre { white-space: pre-wrap; font-family: var(--mono); font-size: 11px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 8px; margin: 6px 0 0; color: var(--text); }
+
+/* ---- capture file view ---- */
+.filebar { display: flex; align-items: center; gap: 12px; padding: 7px 14px; background: #10263d; border-bottom: 1px solid #1d4266; color: #cfe5ff; flex: none; }
+.filebar span { flex: 1; min-width: 0; }
+.fileview #listen, .fileview #record, .fileview #state, .fileview #localDrop, .fileview .play { display: none; }
+.remotemode .play { display: none; }
+
 /* ---- mosaic ---- */
 .mosaicpage { overflow: auto; }
 .mosaicpage header { position: sticky; top: 0; z-index: 2; }

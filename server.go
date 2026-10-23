@@ -327,7 +327,7 @@ func (s *service) guard(h http.Handler) http.Handler {
 					return
 				}
 			}
-			if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
+			if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") && !isUpload(r) {
 				http.Error(w, "expected JSON", http.StatusUnsupportedMediaType)
 				return
 			}

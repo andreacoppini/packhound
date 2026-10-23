@@ -19,6 +19,9 @@ const (
 	LinkRaw      = 101 // bare IP, version read from the first nibble
 	LinkLoop     = 108 // OpenBSD loopback: 4-byte network-order family
 	LinkLinuxSLL = 113 // Linux "cooked" capture
+	// Linux "cooked" capture v2, which tcpdump -i any writes on current
+	// kernels.
+	LinkLinuxSLL2 = 276
 )
 
 // IP protocol numbers the monitor tells apart.
@@ -100,6 +103,11 @@ func Decode(link int, frame []byte, ts time.Time, p *Packet) (ok bool) {
 			return false
 		}
 		return decodeEtherType(binary.BigEndian.Uint16(frame[14:]), frame[16:], p)
+	case LinkLinuxSLL2:
+		if len(frame) < 20 {
+			return false
+		}
+		return decodeEtherType(binary.BigEndian.Uint16(frame), frame[20:], p)
 	}
 	return false
 }

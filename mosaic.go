@@ -51,6 +51,9 @@ type mosaic struct {
 	save   func(seconds int) error
 	jobs   chan decodeJob
 	loop   sync.Once
+	// static is set for a capture file's mosaic: its stills are taken while
+	// the file is read, and there is nothing to refresh.
+	static bool
 }
 
 type shot struct {
@@ -127,6 +130,9 @@ func (m *mosaic) touch() {
 	m.mu.Lock()
 	m.looked = time.Now()
 	m.mu.Unlock()
+	if m.static {
+		return
+	}
 	m.loop.Do(func() {
 		go m.run()
 		if m.ffmpeg != "" {
@@ -219,24 +225,11 @@ func (m *mosaic) step(now time.Time) {
 	m.mu.Lock()
 	for _, c := range chans {
 		sh := m.shots[c.Key]
-		switch {
-		case c.Codec == "":
-			switch {
-			case c.Video != "":
-				sh.problem = "no video this decoder reads"
-			case c.HasAudio:
-				sh.problem = "Radio: audio only"
-			default:
-				sh.problem = "no video"
-			}
-			if c.Scrambled {
-				sh.problem = "scrambled"
-			}
+		if why := stillProblem(c); why != "" {
+			sh.problem = why
 			continue
-		case c.Scrambled:
-			sh.problem = "scrambled"
-			continue
-		case c.Status == monitor.Lost:
+		}
+		if c.Status == monitor.Lost {
 			continue
 		}
 		if sh.grabbing.IsZero() && !sh.queued && now.Sub(sh.tried) >= m.every {
@@ -266,18 +259,90 @@ func (m *mosaic) step(now time.Time) {
 func (m *mosaic) decoder() {
 	for j := range m.jobs {
 		img, cpu, err := m.decode(j)
+		m.store(j.key, img, j.at, err)
+		time.Sleep(time.Duration(float64(cpu) * (1/mosaicBudget - 1)))
+	}
+}
+
+// store keeps a decoded still, or the reason there is none.
+func (m *mosaic) store(key string, img []byte, at time.Time, err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	sh := m.shots[key]
+	if sh == nil {
+		sh = &shot{}
+		m.shots[key] = sh
+	}
+	sh.queued = false
+	if err != nil {
+		sh.problem = "could not decode the picture"
+		return
+	}
+	sum := sha1.Sum(img)
+	sh.jpeg, sh.etag, sh.at, sh.problem = img, `"`+hex.EncodeToString(sum[:8])+`"`, at, ""
+}
+
+// stillProblem says why a channel cannot have a still, or "" when it can.
+func stillProblem(c monitor.Channel) string {
+	switch {
+	case c.Scrambled:
+		return "scrambled"
+	case c.Codec != "":
+		return ""
+	case c.Video != "":
+		return "no video this decoder reads"
+	case c.HasAudio:
+		return "Radio: audio only"
+	}
+	return "no video"
+}
+
+// grabStatic takes one still of each channel of a capture file as it is
+// read: call it as the file is fed in, and with final set at its end.
+// Pictures are decoded there and then; reading the file waits for them.
+func (m *mosaic) grabStatic(at time.Time, final bool) {
+	if m.ffmpeg == "" {
+		return
+	}
+	for _, c := range m.mon.Channels() {
 		m.mu.Lock()
-		if sh := m.shots[j.key]; sh != nil {
-			sh.queued = false
-			if err != nil {
-				sh.problem = "could not decode the picture"
-			} else {
-				sum := sha1.Sum(img)
-				sh.jpeg, sh.etag, sh.at, sh.problem = img, `"`+hex.EncodeToString(sum[:8])+`"`, j.at, ""
+		sh := m.shots[c.Key]
+		if sh == nil {
+			sh = &shot{}
+			m.shots[c.Key] = sh
+		}
+		why, have, grabbing := stillProblem(c), sh.jpeg != nil, !sh.grabbing.IsZero()
+		m.mu.Unlock()
+		switch {
+		case have:
+		case why != "":
+			m.mu.Lock()
+			sh.problem = why
+			m.mu.Unlock()
+		case grabbing:
+			if es, codec, ok := m.mon.Grabbed(c.Key); ok {
+				img, _, err := m.decode(decodeJob{key: c.Key, codec: codec, es: es, at: at})
+				m.store(c.Key, img, at, err)
+				m.mu.Lock()
+				sh.grabbing = time.Time{}
+				m.mu.Unlock()
+			} else if final {
+				m.mon.StopGrab(c.Key)
+				m.mu.Lock()
+				sh.grabbing, sh.problem = time.Time{}, "no key picture in the capture"
+				m.mu.Unlock()
+			}
+		case final:
+			m.mu.Lock()
+			sh.problem = "no key picture in the capture"
+			m.mu.Unlock()
+		default:
+			if m.mon.StartGrab(c.Key) {
+				m.mu.Lock()
+				sh.grabbing = at
+				m.mu.Unlock()
 			}
 		}
-		m.mu.Unlock()
-		time.Sleep(time.Duration(float64(cpu) * (1/mosaicBudget - 1)))
 	}
 }
 

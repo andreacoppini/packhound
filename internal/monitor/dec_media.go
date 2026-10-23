@@ -118,6 +118,11 @@ func (t *tsDec) sourceErrorsLastMinute() uint64 {
 	return t.a.SourceLastMinute() + t.a.QuirksLastMinute()
 }
 
+// errorsTotal counts what errorsLastMinute counts, since the start.
+func (t *tsDec) errorsTotal() uint64 {
+	return t.a.CCErrors - t.a.CCQuirks - t.a.CCSource + t.dups
+}
+
 func (t *tsDec) errorsLastMinute() (uint64, string) {
 	if d := t.dupWin.minute(); d > 0 {
 		return t.a.CCLastMinute() + d, "CC errors / duplicated datagrams"
@@ -373,6 +378,13 @@ func (r *rtpDec) sourceErrorsLastMinute() uint64 {
 		return r.ts.sourceErrorsLastMinute()
 	}
 	return 0
+}
+
+func (r *rtpDec) errorsTotal() uint64 {
+	if r.ts != nil {
+		return r.ts.errorsTotal() + r.lost
+	}
+	return r.lost
 }
 
 func (r *rtpDec) errorsLastMinute() (uint64, string) {

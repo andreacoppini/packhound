@@ -45,13 +45,14 @@ type console struct {
 	svc *service
 
 	mosaic *mosaic
+	file   *fileView // a capture file being read or shown; guarded by mu
 }
 
 func runConsole(opt options) error {
 	cfg := monitor.DefaultConfig()
 	c := &console{
 		eng:      newEngine(cfg),
-		defaults: startRequest{Iface: opt.iface, Mode: opt.mode, Groups: opt.groups, Join: opt.joinToo},
+		defaults: startRequest{Iface: opt.iface, Mode: opt.mode, Groups: opt.groups, Join: opt.joinToo, Remote: opt.remote, From: opt.from, Session: opt.session},
 		update:   startUpdateCheck(!opt.noUpdate),
 		recorded: map[string]string{},
 	}
@@ -110,7 +111,14 @@ func (c *console) routes(mux *http.ServeMux) error {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Write(b)
 	})
-	mosaicAPI := func(w http.ResponseWriter, r *http.Request) { c.mosaic.serve(w, r, "/api/mosaic", "") }
+	mosaicAPI := func(w http.ResponseWriter, r *http.Request) {
+		if _, v := c.viewMonitor(r); v != nil {
+			v.mosaic.serve(w, r, "/api/mosaic", "&view=file")
+			return
+		}
+		c.mosaic.serve(w, r, "/api/mosaic", "")
+	}
+	mux.HandleFunc("/api/import", c.handleImport)
 	mux.HandleFunc("/api/mosaic", mosaicAPI)
 	mux.HandleFunc("/api/mosaic/", mosaicAPI)
 	return nil
@@ -135,12 +143,19 @@ func (c *console) guard(addr string, h http.Handler) http.Handler {
 				return
 			}
 		}
-		if r.Method == http.MethodPost && !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
+		if r.Method == http.MethodPost && !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") && !isUpload(r) {
 			http.Error(w, "expected JSON", http.StatusUnsupportedMediaType)
 			return
 		}
 		h.ServeHTTP(w, r)
 	})
+}
+
+// isUpload is a capture file being uploaded. Its content type is not one a
+// form can send, so a page elsewhere cannot send it without a CORS
+// preflight, which is never granted: as safe as requiring JSON.
+func isUpload(r *http.Request) bool {
+	return r.URL.Path == "/api/import" && r.Header.Get("Content-Type") == "application/vnd.tcpdump.pcap"
 }
 
 func writeJSON(w http.ResponseWriter, v any) {
@@ -274,18 +289,25 @@ func (c *console) handleConfig(w http.ResponseWriter, r *http.Request) {
 func (c *console) handleState(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	win, _ := strconv.Atoi(q.Get("win"))
-	snap := c.eng.mon.Snapshot(q.Get("sel"), win)
+	mon, file := c.viewMonitor(r)
+	snap := mon.Snapshot(q.Get("sel"), win)
 	// The log and alert lists are capped in the monitor; the page only
 	// needs the recent end of the log.
 	if len(snap.Log) > 300 {
 		snap.Log = snap.Log[len(snap.Log)-300:]
 	}
 	c.noteRecording()
-	writeJSON(w, map[string]any{
+	out := map[string]any{
 		"engine": c.eng.status(),
 		"snap":   snap,
 		"update": c.pollUpdate(),
-	})
+	}
+	if file != nil {
+		c.mu.Lock()
+		out["file"] = *file
+		c.mu.Unlock()
+	}
+	writeJSON(w, out)
 }
 
 // noteRecording remembers finished recordings so the page can offer them for
@@ -349,7 +371,8 @@ func (c *console) handleRecording(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *console) handleExport(w http.ResponseWriter, r *http.Request) {
-	snap := c.eng.mon.Snapshot("", 60)
+	mon, _ := c.viewMonitor(r)
+	snap := mon.Snapshot("", 60)
 	stamp := time.Now().Format("20060102-150405")
 	if r.URL.Query().Get("fmt") == "json" {
 		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"packhound-%s.json\"", stamp))
