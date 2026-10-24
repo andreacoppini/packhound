@@ -38,23 +38,31 @@ func LooksLikeTS(b []byte) bool {
 
 // PID is what is known about one packet identifier.
 type PID struct {
-	PID        uint16
-	Packets    uint64
-	CCErrors   uint64 // every continuity error, as TR 101 290 counts them
-	CCQuirks   uint64 // of which: the counter advanced on a packet with no payload
-	CCSource   uint64 // of which: jumps made by the sender, the stream being whole
-	Scrambled  bool
-	Kind       string // "PAT", "PMT", "H.264 video" ...
-	Lang       string
-	Program    uint16
-	StreamType uint8
-	Detail     string // picture size for video, when known
+	PID      uint16
+	Packets  uint64
+	CCErrors uint64 // every continuity error, as TR 101 290 counts them
+	CCQuirks uint64 // of which: the counter advanced on a packet with no payload
+	CCSource uint64 // of which: jumps made by the sender, the stream being whole
+	// Scrambled is true while the PID is scrambled: most of its packets
+	// over the last five whole seconds were. A headend that loses its
+	// source or its conditional access for a moment comes back clear, and
+	// so does this.
+	Scrambled        bool
+	ScrambledPackets uint64 // since the start
+	Kind             string // "PAT", "PMT", "H.264 video" ...
+	Lang             string
+	Program          uint16
+	StreamType       uint8
+	Detail           string // picture size for video, when known
 
 	lastCC   int8 // -1 until seen
 	dupSeen  bool
 	lastDg   uint64    // datagram the PID was last seen in
 	window   [5]uint32 // packets in each of the last five whole seconds
 	thisSec  uint32
+	scrWin   [5]uint32 // of which scrambled
+	scrSec   uint32
+	ticked   bool   // a whole second has passed: Scrambled reads the window
 	section  []byte // PSI section being reassembled
 	sectLeft int
 	h264     h264Scan
@@ -184,6 +192,16 @@ func (a *Analyzer) Tick() {
 		copy(p.window[1:], p.window[:len(p.window)-1])
 		p.window[0] = p.thisSec
 		p.thisSec = 0
+		copy(p.scrWin[1:], p.scrWin[:len(p.scrWin)-1])
+		p.scrWin[0] = p.scrSec
+		p.scrSec = 0
+		var n, s uint32
+		for i := range p.window {
+			n += p.window[i]
+			s += p.scrWin[i]
+		}
+		p.Scrambled = 2*s > n
+		p.ticked = true
 	}
 	a.ccIdx = (a.ccIdx + 1) % len(a.ccWindow)
 	a.ccWindow[a.ccIdx] = uint32(a.ccThisSecond)
@@ -225,6 +243,32 @@ func (a *Analyzer) CCLastMinute() uint64 {
 		n += uint64(c)
 	}
 	return n + a.ccThisSecond
+}
+
+// ScrambledNow reports whether the stream's video, and its audio, are
+// scrambled now: some PID of that kind is.
+func (a *Analyzer) ScrambledNow() (video, audio bool) {
+	for _, p := range a.pids {
+		if !p.Scrambled {
+			continue
+		}
+		switch {
+		case strings.Contains(p.Kind, "video"):
+			video = true
+		case strings.Contains(p.Kind, "audio"):
+			audio = true
+		}
+	}
+	return video, audio
+}
+
+// ScrambledPackets counts the scrambled packets seen on any PID.
+func (a *Analyzer) ScrambledPackets() uint64 {
+	var n uint64
+	for _, p := range a.pids {
+		n += p.ScrambledPackets
+	}
+	return n
 }
 
 // CCLastSecond is the number of continuity errors in the last whole second.
@@ -272,7 +316,11 @@ func (a *Analyzer) packet(b []byte) {
 		a.TEIErrors++
 	}
 	if scr != 0 {
-		p.Scrambled = true
+		p.ScrambledPackets++
+		p.scrSec++
+	}
+	if !p.ticked { // until the first whole second, the latest packet says
+		p.Scrambled = scr != 0
 	}
 
 	payload := b[4:]

@@ -446,6 +446,20 @@ join mode works the same on all three.
 
 ## Changelog
 
+What's new in 1.3.2 (2026-10-24):
+
+```
+*) A channel shows as scrambled only while it is: over the last five
+   seconds, most of its packets were scrambled. Before, a single scrambled
+   moment (a headend losing its source or its conditional access, say)
+   marked it scrambled until Packhound restarted, and the mosaic stopped
+   taking its pictures.
+
+*) Video turning scrambled, and clear again, raises an alert; audio doing
+   the same is logged. The detail panel counts the scrambled packets and
+   says when the latest arrived.
+```
+
 What's new in 1.3.1 (2026-10-23):
 
 ```

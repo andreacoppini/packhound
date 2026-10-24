@@ -1,3 +1,5 @@
+**Packhound 1.3.2** fixes channels showing as scrambled when they are not. A channel now shows as scrambled only while it is (most of its packets over the last five seconds were scrambled); before, one scrambled moment, as when a headend loses its source or its conditional access, marked it scrambled until Packhound restarted, and the mosaic stopped taking its pictures. Video turning scrambled and clear again now raises an alert, and the detail panel counts scrambled packets and says when the latest arrived. Earlier notes follow.
+
 **Packhound 1.3.1** makes ERSPAN work without root: when a raw socket is not allowed, the mirror is received through the interface's capture device, with the same access *Capture everything* uses (Wireshark's ChmodBPF on macOS, Npcap on Windows, `setcap cap_net_raw` on Linux). The status line says which way it arrives. The Ruckus ICX example now uses `monitor-profile 1 type erspan` in lower case, as FastIron requires. 1.3.0's notes follow.
 
 **Packhound 1.3.0: capture files and remote switches.**

@@ -44,6 +44,13 @@ type tsDec struct {
 	next   int
 	dups   uint64
 	dupWin window
+
+	// Scrambling, as it comes and goes: a headend that loses its source
+	// or its conditional access sends its services scrambled for a while.
+	vidScr, audScr bool
+	scrFrom        time.Time // when the video was last found scrambled
+	scrSeen        uint64    // scrambled packets counted so far
+	scrLast        time.Time // the second the latest of them arrived in
 }
 
 func newTS() *tsDec { return &tsDec{a: mpegts.NewAnalyzer()} }
@@ -98,8 +105,9 @@ func datagramHash(b []byte) (uint64, bool) {
 	return h ^ uint64(len(b)), true
 }
 
-func (t *tsDec) tick(_ *Stream, now time.Time) {
+func (t *tsDec) tick(s *Stream, now time.Time) {
 	t.a.Tick()
+	t.noteScrambling(s, now)
 	t.dupWin.roll()
 	if t.drain > 0 && t.ivBytes > 0 {
 		t.df = (t.vbMax - t.vbMin) / t.drain * 1000
@@ -108,6 +116,33 @@ func (t *tsDec) tick(_ *Stream, now time.Time) {
 	t.drain = t.secBytes
 	t.secBytes = 0
 	t.ivStart, t.ivBytes, t.vbMin, t.vbMax = now, 0, 0, 0
+}
+
+// noteScrambling raises an alert when the video turns scrambled or clear,
+// and logs the same for audio. The stream's status stays as it is: the
+// packets are arriving; it is their content that cannot be watched.
+func (t *tsDec) noteScrambling(s *Stream, now time.Time) {
+	if n := t.a.ScrambledPackets(); n != t.scrSeen {
+		t.scrSeen, t.scrLast = n, now
+	}
+	v, a := t.a.ScrambledNow()
+	if v != t.vidScr {
+		if v {
+			t.scrFrom = now
+			s.m.alert(now, s, "warn", "Video scrambled")
+		} else {
+			s.m.alert(now, s, "ok", "Video in the clear again after %s", now.Sub(t.scrFrom).Round(time.Second))
+		}
+		t.vidScr = v
+	}
+	if a != t.audScr {
+		state := "in the clear again"
+		if a {
+			state = "scrambled"
+		}
+		s.m.logf(now, "%s %s: audio %s", s.groupLabel(), s.name(), state)
+		t.audScr = a
+	}
 }
 
 func (t *tsDec) name(*Stream) string { return t.a.ServiceName() }
@@ -161,6 +196,13 @@ func (t *tsDec) describe(s *Stream, d *Detail) {
 	}
 	if t.dups > 0 {
 		d.add("Duplicated datagrams", fmt.Sprintf("%d in the last minute · %d total: the same datagram arrives twice (a loop, or two paths)", t.dupWin.minute(), t.dups))
+	}
+	if t.scrSeen > 0 {
+		now := "now in the clear"
+		if t.vidScr || t.audScr {
+			now = "scrambled now"
+		}
+		d.add("Scrambled packets", fmt.Sprintf("%d in total · the latest at %s · %s", t.scrSeen, t.scrLast.Format("15:04:05"), now))
 	}
 	if t.a.SyncErrors > 0 {
 		d.add("Sync errors", fmt.Sprint(t.a.SyncErrors))

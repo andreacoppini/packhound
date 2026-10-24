@@ -193,3 +193,51 @@ func TestAdaptationOnlyPackets(t *testing.T) {
 		t.Fatalf("loss: per minute %d, missing %d", a.CCLastMinute(), a.Missing)
 	}
 }
+
+// TestScrambledComesAndGoes: a PID scrambled for three seconds reads as
+// scrambled then, and clear again within the five-second window after; a
+// stray scrambled packet in a clear stream never flips it.
+func TestScrambledComesAndGoes(t *testing.T) {
+	a := NewAnalyzer()
+	var cc byte
+	second := func(scrambled int) { // 100 packets, the first `scrambled` of them scrambled
+		var b []byte
+		for i := 0; i < 100; i++ {
+			p := make([]byte, PacketSize)
+			p[0], p[1], p[2], p[3] = SyncByte, 0x01, 0x00, 0x10|cc
+			if i < scrambled {
+				p[3] |= 0x80
+			}
+			cc = (cc + 1) & 0x0f
+			b = append(b, p...)
+		}
+		a.Feed(b)
+		a.Tick()
+	}
+	scrambled := func() bool { return a.pids[0x100].Scrambled }
+
+	for i := 0; i < 5; i++ {
+		second(0)
+	}
+	second(1) // a stray one
+	if scrambled() {
+		t.Fatal("one scrambled packet in a clear stream flips it")
+	}
+	for i := 0; i < 3; i++ {
+		second(100)
+	}
+	if !scrambled() {
+		t.Fatal("three seconds of scrambled packets do not read as scrambled")
+	}
+	clearAfter := 0
+	for i := 1; i <= 5 && scrambled(); i++ {
+		second(0)
+		clearAfter = i
+	}
+	if scrambled() || clearAfter > 3 {
+		t.Errorf("still scrambled %d seconds after it cleared", clearAfter)
+	}
+	if n := a.ScrambledPackets(); n != 301 {
+		t.Errorf("%d scrambled packets counted, want 301", n)
+	}
+}
