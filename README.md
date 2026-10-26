@@ -172,6 +172,39 @@ Windows, macOS and Linux, Packhound uses an `ffmpeg` beside it or on the PATH,
 or the one named in `PACKHOUND_FFMPEG`; without one, the mosaic shows each
 channel's state and audio, but no pictures.
 
+
+### Watching a channel
+
+Click a channel in the mosaic, or **Preview** in a stream's detail, to watch
+it live in the browser: on a laptop, or on a phone over Wi-Fi or a thin
+link. Packhound encodes the channel small, from the stream it already
+receives (so this works for mirrored traffic too):
+
+| Quality | Picture | About |
+|---|---|---|
+| Low (the default) | 640×360 | 700 kb/s |
+| Very low | 426×240 | 350 kb/s |
+| Audio only (radio channels start here) | none | 64 kb/s |
+
+The preview is a few seconds behind live, which is enough to see that a
+channel is right, not to judge lip sync. **Open in a new tab** gives a page
+of its own, which suits a phone; on the appliance, `/watch?ch=239.3.1.1:5701&token=<API token>`
+opens it without logging in, like the mosaic.
+
+Encoding costs CPU on the machine running Packhound: about half a core for
+an HD channel and a tenth for SD. So a preview runs only while someone
+watches it (it stops 30 seconds after the last viewer), everyone watching
+the same channel shares one, and only a few run at once: 2 on the appliance
+(Settings > API > Live previews), 4 on a desktop. Past that, the player
+says so. Scrambled channels cannot be previewed. The encoder runs at a lower
+priority than capture, so monitoring never waits for it.
+
+The appliance includes the encoder. On Windows, macOS and Linux, Packhound
+uses an `ffmpeg` with x264 beside it or on the PATH (most builds have it).
+Previews play in Safari, Chrome, Edge and Firefox, on desktops and phones;
+the player, [hls.js](https://github.com/video-dev/hls.js) (Apache-2.0,
+[licence](docs/licenses/hls.js-LICENSE)), is built in, so nothing is
+fetched from the internet.
 ### Alerts
 
 A video or audio stream raises an alert when it stops, when it degrades, when
@@ -445,6 +478,19 @@ and is checked on every push, but has not yet been run against real hardware;
 join mode works the same on all three.
 
 ## Changelog
+
+What's new in 1.4.0 (2026-10-26):
+
+```
+*) Live previews: click a channel in the mosaic, or Preview in its detail,
+   to watch it in the browser, on a laptop or a phone: encoded small (360p
+   at about 700 kb/s, 240p, or audio only for radio), a few seconds behind
+   live. Previews run only while watched, are shared between viewers, and
+   are capped (2 at once on the appliance, set in Settings).
+
+*) The appliance's ffmpeg now includes x264 and the audio decoders IPTV
+   carries, for previews.
+```
 
 What's new in 1.3.2 (2026-10-24):
 

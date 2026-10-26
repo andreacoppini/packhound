@@ -1,3 +1,12 @@
+**Packhound 1.4.0: watch a channel.**
+
+- **Live previews:** click a channel in the mosaic, or **Preview** in a stream's detail, to watch it live in the browser, on a laptop or a phone over a thin link. Packhound encodes it small from the stream it already receives: 360p at about 700 kb/s, 240p at about 350 kb/s, or audio only (radio channels start there). It is a few seconds behind live: enough to see that a channel is right.
+- **Light on the appliance:** a preview runs only while someone watches, everyone watching a channel shares one, and at most 2 run at once on the appliance (Settings > API > Live previews), 4 on a desktop. An HD preview takes about half a core, SD about a tenth, at a lower priority than monitoring.
+- **Phones and wall screens:** **Open in a new tab** gives the preview a page of its own; with the API token, `/watch?ch=<group:port>&token=<token>` opens it without logging in.
+- The appliance's ffmpeg now includes x264 and the audio decoders IPTV carries. The player (hls.js, Apache-2.0) is built in.
+
+Earlier notes follow.
+
 **Packhound 1.3.2** fixes channels showing as scrambled when they are not. A channel now shows as scrambled only while it is (most of its packets over the last five seconds were scrambled); before, one scrambled moment, as when a headend loses its source or its conditional access, marked it scrambled until Packhound restarted, and the mosaic stopped taking its pictures. Video turning scrambled and clear again now raises an alert, and the detail panel counts scrambled packets and says when the latest arrived. Earlier notes follow.
 
 **Packhound 1.3.1** makes ERSPAN work without root: when a raw socket is not allowed, the mirror is received through the interface's capture device, with the same access *Capture everything* uses (Wireshark's ChmodBPF on macOS, Npcap on Windows, `setcap cap_net_raw` on Linux). The status line says which way it arrives. The Ruckus ICX example now uses `monitor-profile 1 type erspan` in lower case, as FastIron requires. 1.3.0's notes follow.

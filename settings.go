@@ -20,6 +20,7 @@ type settingsView struct {
 	Users    []string       `json:"users"`
 	SNMPInfo map[string]any `json:"snmpInfo"`
 	System   *systemView    `json:"system,omitempty"`
+	Previews int            `json:"previews"` // live previews at once
 }
 
 type systemView struct {
@@ -34,7 +35,7 @@ type systemView struct {
 
 func (s *service) settingsView() settingsView {
 	cfg := s.store.get()
-	v := settingsView{API: cfg.API, SNMP: cfg.SNMP}
+	v := settingsView{API: cfg.API, SNMP: cfg.SNMP, Previews: s.con.previews.limit()}
 	for _, u := range cfg.Users {
 		v.Users = append(v.Users, u.Name)
 	}
@@ -72,6 +73,7 @@ func (s *service) handleSettings(w http.ResponseWriter, r *http.Request) {
 			Current string `json:"current"`
 			New     string `json:"new"`
 		} `json:"password"`
+		Previews int `json:"previews"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeErr(w, err)
@@ -118,6 +120,15 @@ func (s *service) handleSettings(w http.ResponseWriter, r *http.Request) {
 			}
 			return nil
 		})
+	case "previews":
+		if req.Previews < 1 || req.Previews > 16 {
+			err = errors.New("allow 1 to 16 previews at once")
+			break
+		}
+		err = s.store.update(func(c *serverConfig) error { c.Preview.Max = req.Previews; return nil })
+		if err == nil {
+			s.con.previews.setLimit(req.Previews)
+		}
 	case "password":
 		if req.Password == nil || me == nil {
 			err = errors.New("no password given")

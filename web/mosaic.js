@@ -53,9 +53,36 @@ function tile(id) {
   el.innerHTML = '<div class="pic"><img alt="" decoding="async"><div class="over"></div>' +
     '<span class="audio"></span><span class="age"></span><span class="errs"></span></div>' +
     '<figcaption><span class="dot"></span><span class="nm"></span><span class="grp"></span></figcaption>';
+  // A live channel opens its preview; a capture file's stills are all there is.
+  if (!fileView) {
+    el.classList.add("playable");
+    el.onclick = () => openPlayer(id);
+  }
   tiles.set(id, el);
   return el;
 }
+
+// openPlayer shows a channel's live preview over the mosaic.
+function openPlayer(id) {
+  closePlayer();
+  const q = new URLSearchParams({ ch: id, embed: "1" });
+  if (token) q.set("token", token);
+  const box = document.createElement("div");
+  box.className = "mplayer";
+  box.id = "player";
+  box.innerHTML = '<div class="mpanel"><button class="mclose" title="Close (Esc)">×</button><iframe allow="autoplay; fullscreen" allowfullscreen></iframe></div>';
+  box.querySelector("iframe").src = "watch?" + q;
+  box.querySelector(".mclose").onclick = closePlayer;
+  box.onclick = (e) => { if (e.target === box) closePlayer(); };
+  document.body.appendChild(box);
+}
+
+function closePlayer() {
+  const p = $("player");
+  if (p) p.remove(); // the preview stops on its own once nobody asks for it
+}
+
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closePlayer(); });
 
 function draw() {
   if (!last) return;

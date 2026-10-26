@@ -72,8 +72,9 @@ echo "==> Packhound"
 install -m 0755 "$BIN" "$MNT/usr/local/bin/packhound"
 if [ -n "$FFMPEG_DIR" ]; then
 	install -D -m 0755 "$FFMPEG_DIR/ffmpeg" "$MNT/usr/lib/packhound/ffmpeg"
-	install -D -m 0644 "$FFMPEG_DIR/COPYING.LGPLv2.1" "$MNT/usr/share/doc/packhound/ffmpeg-COPYING.LGPLv2.1"
-	echo "FFmpeg 7.1.1, LGPL 2.1, built by scripts/build-ffmpeg.sh from https://ffmpeg.org/releases/ffmpeg-7.1.1.tar.xz" \
+	install -D -m 0644 "$FFMPEG_DIR/COPYING.GPLv2" "$MNT/usr/share/doc/packhound/ffmpeg-COPYING.GPLv2"
+	echo "FFmpeg 7.1.1 with x264, GPL 2 or later, built by scripts/build-ffmpeg.sh from" \
+		"https://ffmpeg.org/releases/ffmpeg-7.1.1.tar.xz and https://code.videolan.org/videolan/x264" \
 		> "$MNT/usr/share/doc/packhound/ffmpeg-SOURCE"
 fi
 cp -a "$HERE/rootfs/." "$MNT/"

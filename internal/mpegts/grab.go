@@ -43,6 +43,17 @@ func (a *Analyzer) VideoPID() (*PID, string) {
 	return nil, ""
 }
 
+// ClearAudioPID is the first audio PID arriving in the clear, for a
+// preview to play, or 0 when there is none.
+func (a *Analyzer) ClearAudioPID() uint16 {
+	for _, p := range a.PIDs() {
+		if strings.Contains(p.Kind, "audio") && !p.Scrambled && p.Rate() > 0 {
+			return p.PID
+		}
+	}
+	return 0
+}
+
 // AudioFlowing reports whether the stream carries audio, and whether any of
 // it is arriving in the clear.
 func (a *Analyzer) AudioFlowing() (has, flowing bool) {

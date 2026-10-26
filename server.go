@@ -91,6 +91,13 @@ func runServer(opt serverOptions) error {
 	}
 	s.eng.mon.SetConfig(fromJSON(cfg.Alerts))
 	s.con = &console{eng: s.eng, defaults: cfg.Listen, update: startUpdateCheck(false), recorded: map[string]string{}, svc: s}
+	// On the appliance, previews share the machine with monitoring: two at
+	// once by default.
+	maxPreviews := cfg.Preview.Max
+	if maxPreviews <= 0 {
+		maxPreviews = 2
+	}
+	s.con.previews = newPreviews(s.eng.mon, findFFmpeg(), filepath.Join(opt.state, "previews"), maxPreviews)
 
 	// Resume listening as last told to.
 	if cfg.Running {
@@ -283,11 +290,11 @@ func (s *service) startSNMP() error {
 
 // open are the paths that work without logging in: the login page itself
 // and what it needs.
-var open = map[string]bool{"/login.html": true, "/style.css": true, "/icon.svg": true, "/login.js": true, "/auth/login": true, "/mosaic.js": true}
+var open = map[string]bool{"/login.html": true, "/style.css": true, "/icon.svg": true, "/login.js": true, "/auth/login": true, "/mosaic.js": true, "/watch.js": true, "/hls.min.js": true}
 
 func (s *service) guard(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("X-Frame-Options", "SAMEORIGIN") // the mosaic shows the player in a frame
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("Strict-Transport-Security", "max-age=31536000")
@@ -305,7 +312,7 @@ func (s *service) guard(h http.Handler) http.Handler {
 		}
 		// The mosaic is read-only, so the API token opens it too: a wall
 		// screen can show /mosaic?token=... without logging in.
-		if open[r.URL.Path] || r.URL.Path == "/mosaic" && s.tokenOK(r) {
+		if open[r.URL.Path] || (r.URL.Path == "/mosaic" || r.URL.Path == "/watch") && s.tokenOK(r) {
 			h.ServeHTTP(w, r)
 			return
 		}

@@ -21,9 +21,12 @@ type Channel struct {
 	ErrorsLastMinute uint64  `json:"errorsLastMinute"`
 	Video            string  `json:"video,omitempty"` // "H.264 1920×1080i"
 	// Codec is the decoder the video needs, "" when there is none here.
-	Codec     string `json:"-"`
-	Scrambled bool   `json:"scrambled"` // the video is scrambled
-	HasAudio  bool   `json:"hasAudio"`
+	Codec string `json:"-"`
+	// The video PID, and the first audio PID in the clear, for a preview
+	// to encode; 0 when there is none.
+	VideoPID, AudioPID uint16 `json:"-"`
+	Scrambled          bool   `json:"scrambled"` // the video is scrambled
+	HasAudio           bool   `json:"hasAudio"`
 	// Audio is true while audio packets arrive in the clear. It says the
 	// audio is there, not that it is not silent.
 	Audio bool `json:"audio"`
@@ -64,8 +67,9 @@ func (m *Monitor) Channels() []Channel {
 		c := Channel{Key: r.Key, Group: r.Group, Name: r.Name, Sender: r.Sender, SenderName: r.SenderName, BPS: r.BPS,
 			Status: r.Status, StatusLevel: r.StatusLevel, Reason: r.Reason, Errors: r.Errors, ErrLevel: r.ErrLevel,
 			ErrorsLastMinute: r.ErrorsLastMinute, Video: t.a.VideoSummary()}
+		c.AudioPID = t.a.ClearAudioPID()
 		if p, codec := t.a.VideoPID(); p != nil {
-			c.Codec, c.Scrambled = codec, p.Scrambled
+			c.Codec, c.Scrambled, c.VideoPID = codec, p.Scrambled, p.PID
 		} else {
 			for _, p := range t.a.PIDs() {
 				if strings.Contains(p.Kind, "video") && p.Scrambled {

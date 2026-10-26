@@ -84,6 +84,7 @@ type Monitor struct {
 	started time.Time
 	now     time.Time // latest tick
 	dropped uint64    // packets for streams beyond maxStreams
+	taps    map[Key][]*Tap
 
 	// Packets lost on this machine before they could be read: the capture
 	// buffer overflowed. Errors seen while this happens may not be real.
@@ -267,6 +268,9 @@ func (m *Monitor) ingest(p *pkt.Packet) {
 		m.logf(p.Time, "New stream %s: %s from %s", s.groupLabel(), s.typ, p.Src)
 	}
 	s.ingest(p)
+	if len(m.taps) > 0 {
+		m.feedTaps(s, p)
+	}
 }
 
 // Tick moves every stream on to the second containing now and works out

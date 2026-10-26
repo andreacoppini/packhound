@@ -90,7 +90,11 @@ GET https://${esc(host)}/api/v1/streams/239.192.1.1:1234   one stream, with its 
 GET https://${esc(host)}/api/v1/alerts?since=2026-10-22T08:00:00Z
 GET https://${esc(host)}/metrics                        Prometheus
 
-curl -k -H "Authorization: Bearer ${esc(tok)}" https://${esc(host)}/api/v1/streams</pre>`;
+curl -k -H "Authorization: Bearer ${esc(tok)}" https://${esc(host)}/api/v1/streams</pre>
+<h3>Live previews</h3>
+<label><span>Channels previewed at once, at most</span><input type="number" id="pvMax" min="1" max="16" value="${d.previews}"></label>
+<div class="actions"><button class="primary" id="pvSave">Save</button></div>
+<div class="hint">A preview encodes the channel on this machine while someone watches: about half a core for an HD channel, a tenth for SD. Everyone watching the same channel shares one.</div>`;
   } else if (S.tab === "account") {
     body = `
 <div class="hint">Logged in as <b>${esc(ui.server.user)}</b>. ${d.system ? "On the appliance the same password opens the VM console and SSH." : ""}</div>
@@ -162,6 +166,7 @@ function wireSettings() {
   on("apiNew", () => {
     if (confirm("Make a new token? Anything using the old one stops working.")) saveSettings({ section: "api", api: { enabled: checked("apiEnabled"), newKey: true } }, "New token made");
   });
+  on("pvSave", () => saveSettings({ section: "previews", previews: +val("pvMax") }, "Preview limit saved"));
   on("apiCopy", () => navigator.clipboard.writeText(val("apiToken")).then(() => toast("Token copied", true), () => toast("Select the token and copy it")));
   on("pwSave", () => {
     if (val("pwNew") !== val("pwNew2")) return toast("The new passwords do not match");

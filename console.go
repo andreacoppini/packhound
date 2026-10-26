@@ -44,8 +44,9 @@ type console struct {
 	// and the page is told what else it may offer.
 	svc *service
 
-	mosaic *mosaic
-	file   *fileView // a capture file being read or shown; guarded by mu
+	mosaic   *mosaic
+	previews *previews
+	file     *fileView // a capture file being read or shown; guarded by mu
 }
 
 func runConsole(opt options) error {
@@ -106,11 +107,23 @@ func (c *console) routes(mux *http.ServeMux) error {
 	if c.mosaic == nil {
 		c.mosaic = newMosaic(c.eng.mon)
 	}
-	mux.HandleFunc("/mosaic", func(w http.ResponseWriter, r *http.Request) {
-		b, _ := webAssets.ReadFile("web/mosaic.html")
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write(b)
-	})
+	if c.previews == nil {
+		// On a desktop, a few previews at once: the machine is the
+		// viewer's own.
+		c.previews = newPreviews(c.eng.mon, c.mosaic.ffmpeg, "", 4)
+	}
+	page := func(name string) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			b, _ := webAssets.ReadFile("web/" + name)
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Write(b)
+		}
+	}
+	mux.HandleFunc("/mosaic", page("mosaic.html"))
+	mux.HandleFunc("/watch", page("watch.html"))
+	liveAPI := func(w http.ResponseWriter, r *http.Request) { c.previews.serve(w, r, "/api/live", "") }
+	mux.HandleFunc("/api/live", liveAPI)
+	mux.HandleFunc("/api/live/", liveAPI)
 	mosaicAPI := func(w http.ResponseWriter, r *http.Request) {
 		if _, v := c.viewMonitor(r); v != nil {
 			v.mosaic.serve(w, r, "/api/mosaic", "&view=file")

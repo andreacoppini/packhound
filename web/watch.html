@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Packhound preview</title>
+<link rel="stylesheet" href="style.css">
+<link rel="icon" type="image/svg+xml" href="icon.svg">
+</head>
+<body class="watchpage">
+<div class="watch">
+  <div class="whead">
+    <span class="dot" id="dot"></span>
+    <b id="name">…</b>
+    <span class="grp" id="group"></span>
+    <span class="wspacer"></span>
+    <a id="newTab" target="_blank" rel="noopener" hidden>Open in a new tab</a>
+  </div>
+  <div class="wvideo">
+    <video id="video" playsinline controls muted autoplay></video>
+    <div class="wmsg" id="msg">Starting the preview…</div>
+  </div>
+  <div class="wbar">
+    <span class="segbtns" id="quality">
+      <button data-q="low">Low · 360p</button><button data-q="verylow">Very low · 240p</button><button data-q="audio">Audio only</button>
+    </span>
+    <span class="wnote" id="note"></span>
+  </div>
+  <div class="hint">A few seconds behind live. Encoded on the machine running Packhound, only while someone watches.</div>
+</div>
+<script src="hls.min.js"></script>
+<script src="watch.js"></script>
+</body>
+</html>

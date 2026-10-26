@@ -363,6 +363,12 @@ func (s *service) handleAPI(w http.ResponseWriter, r *http.Request) {
 			tok = "&token=" + url.QueryEscape(t)
 		}
 		s.con.mosaic.serve(w, r, "/api/v1/mosaic", tok)
+	case path == "live" || strings.HasPrefix(path, "live/"):
+		tok := ""
+		if t := q.Get("token"); t != "" {
+			tok = "token=" + url.QueryEscape(t)
+		}
+		s.con.previews.serve(w, r, "/api/v1/live", tok)
 	case path == "alerts":
 		snap := s.eng.mon.Snapshot("", 60)
 		alerts := snap.Alerts

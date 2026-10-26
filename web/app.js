@@ -674,7 +674,7 @@ function renderDrawer() {
     const kv = (d.kv || []).map((x) => `<dt>${esc(x.k)}</dt><dd>${esc(x.v)}</dd>`).join("");
     setPane(p, `<div class="detail">
 <div class="facts"><div class="dhead"><span class="g">${esc(d.group)}</span><span class="badge k-${d.kind}">${esc(d.type)}</span><span class="st st-${d.statusLevel}">${esc(d.status)}</span></div>
-${d.playURL ? `<div class="play">${ui.server ? "" : `<button class="small primary" data-vlc="${esc(d.key)}" title="Start VLC on this computer playing ${esc(d.playURL)}">Open in VLC</button>`}<a class="small" href="/api/playlist?key=${encodeURIComponent(d.key)}" title="A playlist file any player opens">Playlist .m3u</a><button class="small" data-copy="${esc(d.playURL)}" title="Copy the URL, to paste into a player">Copy URL</button><span class="m url">${esc(d.playURL)}</span></div>` : ""}
+${d.playURL ? `<div class="play"><a class="small primary preview" href="watch?ch=${encodeURIComponent(d.group)}" target="_blank" rel="noopener" title="Watch it here, encoded small for a browser or phone">Preview</a>${ui.server ? "" : `<button class="small primary" data-vlc="${esc(d.key)}" title="Start VLC on this computer playing ${esc(d.playURL)}">Open in VLC</button>`}<a class="small" href="/api/playlist?key=${encodeURIComponent(d.key)}" title="A playlist file any player opens">Playlist .m3u</a><button class="small" data-copy="${esc(d.playURL)}" title="Copy the URL, to paste into a player">Copy URL</button><span class="m url">${esc(d.playURL)}</span></div>` : ""}
 <div class="dname">${esc(d.name)}</div><dl class="kv">${kv}</dl></div>
 <div class="graph">${chartHTML(d)}</div>
 <div class="tables">${(d.tables || []).map(tableHTML).join("")}</div></div>`, d.key);

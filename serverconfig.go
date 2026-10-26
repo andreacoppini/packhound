@@ -33,7 +33,12 @@ type serverConfig struct {
 	API   apiConfig    `json:"api"`
 	SNMP  snmpConfig   `json:"snmp"`
 
-	Mosaic mosaicConfig `json:"mosaic"`
+	Mosaic  mosaicConfig  `json:"mosaic"`
+	Preview previewConfig `json:"preview"`
+}
+
+type previewConfig struct {
+	Max int `json:"max"` // previews encoding at once; 0: the default
 }
 
 type mosaicConfig struct {
