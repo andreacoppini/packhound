@@ -20,6 +20,9 @@ VERSION=7.1.1
 SHA256=733984395e0dbbe5c046abda2dc49a5544e7e0e1e2366bba849222ae9e3a03b1
 X264_COMMIT=31e19f92f00c7003fa115047ce50978bc98c3a0d # the stable branch
 OUT=$(realpath -m "$1")
+for tool in git curl make cc nasm pkg-config; do
+	command -v "$tool" >/dev/null || { echo "build-ffmpeg: $tool is needed" >&2; exit 1; }
+done
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
@@ -46,7 +49,10 @@ PKG_CONFIG_PATH="$WORK/prefix/lib/pkgconfig" ./configure \
 	--enable-muxer=image2pipe,mjpeg,hls,mp4,mpegts \
 	--enable-filter=scale,format,null,yadif,fps,aresample,anull,aformat \
 	--enable-swscale --enable-swresample \
-	--enable-protocol=pipe,file >/dev/null
+	--enable-protocol=pipe,file >"$WORK/configure.out" || {
+	tail -n 20 "$WORK/configure.out" ffbuild/config.log >&2
+	exit 1
+}
 make -j"$(nproc)" ffmpeg >/dev/null
 mkdir -p "$OUT"
 strip -o "$OUT/ffmpeg" ffmpeg
