@@ -479,6 +479,15 @@ join mode works the same on all three.
 
 ## Changelog
 
+What's new in 1.4.1 (2026-10-26):
+
+```
+*) Live previews play in Chrome: recent Chrome claims to play HLS itself,
+   then stalls at 0:00 on a live stream, so the built-in player is used
+   wherever it runs. A preview whose clock stops is now restarted, and
+   the player says when it is waiting for pictures.
+```
+
 What's new in 1.4.0 (2026-10-26):
 
 ```

@@ -1,3 +1,5 @@
+**Packhound 1.4.1** makes live previews play in Chrome. Recent Chrome versions claim to play HLS natively but stall at 0:00 on a live stream; the player now uses its built-in hls.js wherever it runs, and native HLS only on iPhones and iPads. A preview whose clock stops is restarted, and the player says when it is waiting for pictures. Earlier notes follow.
+
 **Packhound 1.4.0: watch a channel.**
 
 - **Live previews:** click a channel in the mosaic, or **Preview** in a stream's detail, to watch it live in the browser, on a laptop or a phone over a thin link. Packhound encodes it small from the stream it already receives: 360p at about 700 kb/s, 240p at about 350 kb/s, or audio only (radio channels start there). It is a few seconds behind live: enough to see that a channel is right.

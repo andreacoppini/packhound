@@ -27,6 +27,7 @@ function playlistURL(quality) {
 
 async function play(quality) {
   q = quality;
+  played = false;
   for (const b of $("quality").querySelectorAll("button")) b.classList.toggle("on", b.dataset.q === q);
   if (hls) { hls.destroy(); hls = null; }
   const video = $("video");
@@ -49,9 +50,10 @@ async function play(quality) {
   }
   if (quality !== q) return; // changed meanwhile
   video.classList.toggle("audioonly", q === "audio");
-  if (video.canPlayType("application/vnd.apple.mpegurl")) {
-    video.src = url;
-  } else if (window.Hls && Hls.isSupported()) {
+  // hls.js wherever it runs: recent Chrome claims to play HLS itself, then
+  // stalls at 0:00 on a live stream. Native HLS only where hls.js cannot
+  // run, which is iOS.
+  if (window.Hls && Hls.isSupported()) {
     hls = new Hls({ liveSyncDurationCount: 2, maxBufferLength: 10, backBufferLength: 10 });
     mediaErrors = 0;
     // Stopping hls.js from inside its own event has to wait for the event
@@ -82,6 +84,8 @@ async function play(quality) {
     });
     hls.loadSource(url);
     hls.attachMedia(video);
+  } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+    video.src = url;
   } else {
     message("This browser cannot play the preview");
     return;
@@ -89,7 +93,32 @@ async function play(quality) {
   video.play().catch(() => {});
 }
 
-$("video").addEventListener("playing", () => message(q === "audio" ? "Audio only" : ""));
+let played = false; // since the stream was last (re)started
+$("video").addEventListener("playing", () => {
+  played = true;
+  message(q === "audio" ? "Audio only" : "");
+});
+$("video").addEventListener("waiting", () => message("Waiting for pictures…"));
+
+// The watchdog: a preview whose clock stops while it should be playing is
+// started again, rather than left as a still black box.
+let lastTime = -1, stuckFor = 0;
+setInterval(() => {
+  const v = $("video");
+  const failed = !$("msg").hidden && /^(Cannot|This browser|The preview cannot)/.test($("msg").textContent);
+  // Left alone: no stream, a fault already shown, or a pause the viewer chose.
+  if (!q || v.ended || failed || (v.paused && played)) {
+    stuckFor = 0;
+    return;
+  }
+  stuckFor = v.currentTime === lastTime ? stuckFor + 2 : 0;
+  lastTime = v.currentTime;
+  if (stuckFor >= (played ? 8 : 20)) { // the first pictures take a few seconds
+    stuckFor = 0;
+    message("The preview stalled; restarting…");
+    play(q);
+  }
+}, 2000);
 
 // The channel's name and state, from the mosaic's list.
 async function info() {
